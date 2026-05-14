@@ -1,6 +1,6 @@
 cask "clawdbar" do
   version "0.1.0"
-  sha256 "d1e4a7701e396bdf784d93693224a2b34b441183ae6b024a24283b0b0fe03b60"
+  sha256 "e8ebfd7e27ff258e73829f0e553a90338a0cadaad63ffb20cd293d01aac8d0f1"
 
   url "https://github.com/rauppvj/clawdbar/releases/download/v#{version}/ClawdBar-#{version}.dmg"
   name "ClawdBar"
