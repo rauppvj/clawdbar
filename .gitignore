@@ -1,0 +1,25 @@
+## macOS
+.DS_Store
+
+## Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+## Xcode
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
+
+## Release artifacts produced by scripts/build-app.sh
+dist/
+*.dmg
+*.app/
+
+## Dev-only escape hatches
+*.local.swift
+
+## Private operational notes (kept local, not part of the public repo)
+STATUS.md

@@ -1,0 +1,25 @@
+/* Common */
+"app.name" = "ClawdBar";
+"app.unofficial" = "Unofficial. Not affiliated with Anthropic.";
+
+/* Header / status */
+"popover.title" = "USAGE";
+"popover.section.current" = "CURRENT  ·  5H";
+"popover.section.weekly" = "WEEKLY  ·  7D";
+"popover.action.refresh" = "Refresh";
+"popover.action.toggleFloating" = "Toggle floating window";
+"popover.action.preferences" = "Preferences…";
+"popover.action.quit" = "Quit ClawdBar";
+
+/* States */
+"state.notSignedIn" = "Not signed in. Run `claude /login` in a terminal.";
+"state.sessionExpired" = "Session expired. Run `claude /login` to refresh.";
+"state.offline" = "Offline — showing last known values.";
+
+/* Onboarding */
+"onboarding.welcome.title" = "Welcome to ClawdBar";
+"onboarding.welcome.body" = "A tiny menu-bar dashboard for your Claude Code usage.";
+"onboarding.credentials.title" = "Keychain access";
+"onboarding.credentials.body" = "ClawdBar reads your Claude Code OAuth token from the macOS Keychain. macOS will ask you to approve once; the token never leaves your machine except for the API call.";
+"onboarding.style.title" = "Pick a menu-bar style";
+"onboarding.done" = "Get started";

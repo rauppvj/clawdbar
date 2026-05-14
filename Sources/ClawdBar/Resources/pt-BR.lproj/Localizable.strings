@@ -1,0 +1,25 @@
+/* Common */
+"app.name" = "ClawdBar";
+"app.unofficial" = "Não oficial. Sem afiliação com a Anthropic.";
+
+/* Header / status */
+"popover.title" = "USO";
+"popover.section.current" = "ATUAL  ·  5H";
+"popover.section.weekly" = "SEMANAL  ·  7D";
+"popover.action.refresh" = "Atualizar";
+"popover.action.toggleFloating" = "Alternar janela flutuante";
+"popover.action.preferences" = "Preferências…";
+"popover.action.quit" = "Sair do ClawdBar";
+
+/* States */
+"state.notSignedIn" = "Não autenticado. Execute `claude /login` no terminal.";
+"state.sessionExpired" = "Sessão expirada. Execute `claude /login` para renovar.";
+"state.offline" = "Sem conexão — mostrando últimos valores conhecidos.";
+
+/* Onboarding */
+"onboarding.welcome.title" = "Bem-vindo ao ClawdBar";
+"onboarding.welcome.body" = "Um pequeno painel na barra de menus para o seu uso do Claude Code.";
+"onboarding.credentials.title" = "Acesso à Chaveira";
+"onboarding.credentials.body" = "O ClawdBar lê o token OAuth do Claude Code da Chaveira do macOS. O macOS pedirá sua aprovação uma vez; o token nunca sai da sua máquina, exceto pela própria chamada à API.";
+"onboarding.style.title" = "Escolha um estilo de barra de menus";
+"onboarding.done" = "Começar";

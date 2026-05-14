@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    # Also fire on release tags so the `release:` job below has a chance to
+    # run — without this, tag pushes don't trigger the workflow at all and
+    # the job's `if: startsWith(github.ref, 'refs/tags/v')` never gets a turn.
+    tags: ['v*']
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build & test (macOS)
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select latest Xcode
+        run: sudo xcode-select --switch /Applications/Xcode.app
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Cache SwiftPM
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build
+            ~/Library/Caches/org.swift.swiftpm
+          key: spm-${{ runner.os }}-${{ hashFiles('Package.swift', 'Package.resolved') }}
+          restore-keys: |
+            spm-${{ runner.os }}-
+
+      - name: Build
+        run: swift build -c debug
+
+      - name: Test
+        run: swift test --parallel
+
+  release:
+    name: Build DMG for release
+    runs-on: macos-latest
+    needs: build-and-test
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select latest Xcode
+        run: sudo xcode-select --switch /Applications/Xcode.app
+
+      - name: Build .app + DMG (ad-hoc signed)
+        run: |
+          # Strip the leading "v" from the tag so the DMG name + Info.plist
+          # match the convention used in the Homebrew cask URL (which builds
+          # `releases/download/v{version}/ClawdBar-{version}.dmg`).
+          export VERSION="${GITHUB_REF_NAME#v}"
+          ./scripts/build-app.sh
+
+      # To switch to a notarized build, set the secrets below and uncomment.
+      # Required:
+      #   APPLE_DEVELOPER_ID  — "Developer ID Application: Your Name (TEAMID)"
+      #   APPLE_NOTARY_PROFILE — keychain profile name created with notarytool
+      #   APPLE_CERT_P12       — base64-encoded .p12 certificate
+      #   APPLE_CERT_P12_PWD   — password for the .p12
+      #
+      # - name: Import signing cert
+      #   run: |
+      #     echo "$APPLE_CERT_P12" | base64 -d > cert.p12
+      #     security create-keychain -p "" build.keychain
+      #     security default-keychain -s build.keychain
+      #     security unlock-keychain -p "" build.keychain
+      #     security import cert.p12 -k build.keychain -P "$APPLE_CERT_P12_PWD" -T /usr/bin/codesign
+      #     security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
+      # - name: Build signed + notarized
+      #   env:
+      #     SIGN_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID }}
+      #     VERSION: ${{ github.ref_name }}
+      #   run: |
+      #     ./scripts/build-app.sh
+      #     xcrun notarytool submit dist/ClawdBar-*.dmg \
+      #       --keychain-profile "$APPLE_NOTARY_PROFILE" --wait
+      #     xcrun stapler staple dist/ClawdBar-*.dmg
+
+      - name: Upload DMG to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/ClawdBar-*.dmg
+          generate_release_notes: true
