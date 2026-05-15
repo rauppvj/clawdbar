@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ClawdBar — See your Claude Code usage at a glance</title>
+  <meta name="description" content="Native macOS menu-bar app that surfaces your live Claude Code (Pro / Max / Team) 5-hour and 7-day rate-limit usage. Zero setup beyond brew install.">
+  <meta property="og:title" content="ClawdBar — Claude Code usage in your menu bar">
+  <meta property="og:description" content="Native macOS menu-bar app. Live 5h + 7d rate-limit usage. Zero setup beyond brew install.">
+  <meta property="og:image" content="assets/hero-screenshot.jpeg">
+  <meta name="theme-color" content="#0E0E10">
+
+  <link rel="stylesheet" href="styles.css">
+  <link rel="icon" type="image/png" sizes="128x128" href="assets/icon-128.png">
+  <link rel="apple-touch-icon" href="assets/icon-512.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<header class="nav">
+  <a href="#" class="brand">
+    <img src="assets/icon-128.png" alt="" width="28" height="28">
+    <span>ClawdBar</span>
+  </a>
+  <nav>
+    <a href="#features">Features</a>
+    <a href="#how">How</a>
+    <a href="#install">Install</a>
+    <a href="https://github.com/rauppvj/clawdbar" target="_blank" rel="noopener">GitHub</a>
+  </nav>
+</header>
+
+<main>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="container hero-grid">
+      <div class="hero-copy">
+        <h1>See your Claude Code usage at a glance.</h1>
+        <p class="lede">Native macOS menu-bar app. Reads your existing Claude Code login. Surfaces live 5-hour and 7-day rate-limit usage. Zero setup beyond brew install.</p>
+
+        <div class="install-pill">
+          <code id="install-code-hero">brew install --cask rauppvj/tap/clawdbar</code>
+          <button class="copy-btn" data-clipboard-target="install-code-hero" aria-label="Copy install command">Copy</button>
+        </div>
+
+        <p class="hero-secondary">
+          <a href="https://github.com/rauppvj/clawdbar/releases/latest" target="_blank" rel="noopener">Or download the DMG &rarr;</a>
+        </p>
+
+        <p class="reqs">macOS 15 (Sequoia) or newer · Claude Pro / Max / Team · MIT licensed</p>
+      </div>
+
+      <div class="hero-visual">
+        <img src="assets/hero-screenshot.jpeg" alt="ClawdBar showing the menu-bar icon, an open popover with 5h and 7d usage bars, and a floating overlay on the macOS desktop" width="1568" height="1024" loading="eager">
+      </div>
+    </div>
+  </section>
+
+  <!-- FEATURES -->
+  <section id="features" class="features">
+    <div class="container">
+      <h2 class="section-h2">Everything in your menu bar.</h2>
+      <div class="features-grid">
+        <article class="feature-card">
+          <h3>Live in the menu bar</h3>
+          <p>Five icon styles — numeric, mini bar, mascot, dual bar, hybrid. The monochrome capybara silhouette adapts to your light or dark menu bar automatically.</p>
+        </article>
+        <article class="feature-card">
+          <h3>Detailed popover</h3>
+          <p>Plan pill, 5h session bar, 7-day weekly bar, reset countdowns. A mood line rotates through Anthropic-style verbs — Cogitating, Pondering, Brewing, Smelting.</p>
+        </article>
+        <article class="feature-card">
+          <h3>Floating overlay</h3>
+          <p>Pin a live readout anywhere. Carousel between current usage, a 7-day heatmap, weekly stats, and the Tamagotchi page where the capybara sits in a pool whose water rises with usage.</p>
+        </article>
+        <article class="feature-card">
+          <h3>Threshold alerts</h3>
+          <p>Set warning + critical thresholds per window. Get a native macOS notification when you hit them. No more "you've hit your limit" surprises mid-flow.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- SCROLL-DRIVEN MASCOT SECTION (DARK) -->
+  <section class="mascot-section" id="mascot-section">
+    <div class="container mascot-grid">
+
+      <div class="mascot-visual">
+        <div class="mascot-svg-wrap">
+          <!-- SLEEP -->
+          <svg viewBox="0 0 16 16" class="mascot-svg active" data-state="sleep" aria-hidden="true">
+            <g fill="#8B6F4E">
+              <rect x="3" y="3" width="1" height="2"/>
+              <rect x="4" y="4" width="1" height="1"/>
+              <rect x="12" y="3" width="1" height="2"/>
+              <rect x="11" y="4" width="1" height="1"/>
+              <rect x="2" y="5" width="12" height="5"/>
+              <rect x="3" y="10" width="1" height="2"/>
+              <rect x="6" y="10" width="1" height="2"/>
+              <rect x="9" y="10" width="1" height="2"/>
+              <rect x="12" y="10" width="1" height="2"/>
+            </g>
+            <rect x="13" y="5" width="1" height="5" fill="#6E573D"/>
+            <!-- closed eyes (thin slits) -->
+            <rect x="5" y="7.4" width="1" height="0.25" fill="#0E0E10"/>
+            <rect x="10" y="7.4" width="1" height="0.25" fill="#0E0E10"/>
+            <!-- Zs floating -->
+            <text x="12.5" y="3.5" fill="#6FB3D8" font-family="Press Start 2P, monospace" font-size="1.4" opacity="0.6">z</text>
+            <text x="13.5" y="2.5" fill="#6FB3D8" font-family="Press Start 2P, monospace" font-size="1" opacity="0.5">z</text>
+          </svg>
+
+          <!-- CHILL -->
+          <svg viewBox="0 0 16 16" class="mascot-svg" data-state="chill" aria-hidden="true">
+            <g fill="#8B6F4E">
+              <rect x="3" y="3" width="1" height="2"/>
+              <rect x="4" y="4" width="1" height="1"/>
+              <rect x="12" y="3" width="1" height="2"/>
+              <rect x="11" y="4" width="1" height="1"/>
+              <rect x="2" y="5" width="12" height="5"/>
+              <rect x="3" y="10" width="1" height="2"/>
+              <rect x="6" y="10" width="1" height="2"/>
+              <rect x="9" y="10" width="1" height="2"/>
+              <rect x="12" y="10" width="1" height="2"/>
+            </g>
+            <rect x="13" y="5" width="1" height="5" fill="#6E573D"/>
+            <!-- open eye dots -->
+            <rect x="5" y="7" width="1" height="1" fill="#0E0E10"/>
+            <rect x="10" y="7" width="1" height="1" fill="#0E0E10"/>
+          </svg>
+
+          <!-- WORK -->
+          <svg viewBox="0 0 16 16" class="mascot-svg" data-state="work" aria-hidden="true">
+            <g transform="translate(0, -0.4)">
+              <g fill="#8B6F4E">
+                <rect x="3" y="3" width="1" height="2"/>
+                <rect x="4" y="4" width="1" height="1"/>
+                <rect x="12" y="3" width="1" height="2"/>
+                <rect x="11" y="4" width="1" height="1"/>
+                <rect x="2" y="5" width="12" height="5"/>
+                <rect x="3" y="10" width="1" height="2"/>
+                <rect x="6" y="10" width="1" height="2"/>
+                <rect x="9" y="10" width="1" height="2"/>
+                <rect x="12" y="10" width="1" height="2"/>
+              </g>
+              <rect x="13" y="5" width="1" height="5" fill="#6E573D"/>
+              <!-- eyes glancing left -->
+              <rect x="4.6" y="7" width="1" height="1" fill="#0E0E10"/>
+              <rect x="9.6" y="7" width="1" height="1" fill="#0E0E10"/>
+            </g>
+          </svg>
+
+          <!-- PANIC -->
+          <svg viewBox="0 0 16 16" class="mascot-svg" data-state="panic" aria-hidden="true">
+            <g transform="translate(-0.25, 0.25)">
+              <g fill="#8B6F4E">
+                <rect x="3" y="3" width="1" height="2"/>
+                <rect x="4" y="4" width="1" height="1"/>
+                <rect x="12" y="3" width="1" height="2"/>
+                <rect x="11" y="4" width="1" height="1"/>
+                <rect x="2" y="5" width="12" height="5"/>
+                <rect x="3" y="10" width="1" height="2"/>
+                <rect x="6" y="10" width="1" height="2"/>
+                <rect x="9" y="10" width="1" height="2"/>
+                <rect x="12" y="10" width="1" height="2"/>
+              </g>
+              <rect x="13" y="5" width="1" height="5" fill="#6E573D"/>
+              <!-- wide-open eyes -->
+              <rect x="4.6" y="6.6" width="1.4" height="1.4" fill="#0E0E10"/>
+              <rect x="9.6" y="6.6" width="1.4" height="1.4" fill="#0E0E10"/>
+            </g>
+            <!-- sweat drops -->
+            <rect x="14" y="6" width="0.6" height="1.2" fill="#6FB3D8" rx="0.3"/>
+            <rect x="1.4" y="6" width="0.6" height="1.2" fill="#6FB3D8" rx="0.3"/>
+            <!-- sparks -->
+            <rect x="1" y="1" width="0.8" height="0.8" fill="#E89B65"/>
+            <rect x="14" y="2" width="0.8" height="0.8" fill="#E89B65"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="mascot-panels">
+        <article class="panel" data-state="sleep">
+          <span class="state-label">0 – 25%</span>
+          <h2>She sleeps.</h2>
+          <p>Light day. The capybara naps quietly. You have hours of headroom.</p>
+        </article>
+        <article class="panel" data-state="chill">
+          <span class="state-label">25 – 60%</span>
+          <h2>She breathes.</h2>
+          <p>Steady use. She blinks occasionally. The bar is comfortable. Keep shipping.</p>
+        </article>
+        <article class="panel" data-state="work">
+          <span class="state-label">60 – 80%</span>
+          <h2>She bobs.</h2>
+          <p>You're cooking. She rocks forward with you, eyes scanning the work.</p>
+        </article>
+        <article class="panel" data-state="panic">
+          <span class="state-label">80 – 100%</span>
+          <h2>She panics.</h2>
+          <p>The 5-hour window is closing. She shakes, eyes wide. Time to take a break.</p>
+        </article>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- HOW IT WORKS -->
+  <section id="how" class="how">
+    <div class="container">
+      <h2 class="section-h2">How it works.</h2>
+      <div class="how-grid">
+        <article>
+          <h3>Reads your Keychain.</h3>
+          <p>The Claude Code OAuth token lives as <code>Claude Code-credentials</code> in your macOS Keychain. ClawdBar reads it via <code>SecItemCopyMatching</code> — never copies it anywhere, never sends it anywhere except <code>api.anthropic.com</code>.</p>
+        </article>
+        <article>
+          <h3>One Haiku token per minute.</h3>
+          <p>Polls <code>/v1/messages</code> with <code>max_tokens: 1</code> and parses the <code>anthropic-ratelimit-unified-*</code> response headers. About 1.4k tokens/day in total — on the order of <strong>US$&nbsp;0.0001/day</strong>.</p>
+        </article>
+        <article>
+          <h3>Audit it yourself.</h3>
+          <p>Four shell commands in <a href="https://github.com/rauppvj/clawdbar/blob/main/CONTRIBUTING.md#auditing-the-codebase" target="_blank" rel="noopener">CONTRIBUTING.md</a> enumerate every dependency, every network endpoint, every bundled asset. Zero third-party Swift deps — only Apple frameworks.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- PRIVACY -->
+  <section class="privacy">
+    <div class="container">
+      <h2 class="section-h2">Privacy.</h2>
+      <ul class="privacy-list">
+        <li>The OAuth token is read locally and only ever sent to <code>api.anthropic.com</code>.</li>
+        <li>No telemetry. No analytics. No crash reporting. No background phone-home.</li>
+        <li>Local usage history lives at <code>~/.clawdbar/history.jsonl</code>. iCloud sync of any usage data is explicitly out of scope.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- INSTALL CTA -->
+  <section id="install" class="install">
+    <div class="container">
+      <h2 class="section-h2-dark">Install.</h2>
+      <div class="install-block">
+        <code id="install-code-bottom">brew install --cask rauppvj/tap/clawdbar</code>
+        <button class="copy-btn copy-btn-accent" data-clipboard-target="install-code-bottom" aria-label="Copy install command">Copy</button>
+      </div>
+      <p class="install-fallback">
+        No Homebrew? <a href="https://github.com/rauppvj/clawdbar/releases/latest" target="_blank" rel="noopener">Download the latest DMG</a> from GitHub Releases. First launch needs a right-click → Open, or run <code>xattr -dr com.apple.quarantine /Applications/ClawdBar.app</code> once.
+      </p>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="container footer-grid">
+    <div>
+      <strong>Product</strong>
+      <a href="https://github.com/rauppvj/clawdbar" target="_blank" rel="noopener">Source on GitHub</a>
+      <a href="https://github.com/rauppvj/clawdbar/releases" target="_blank" rel="noopener">Releases</a>
+      <a href="https://github.com/rauppvj/clawdbar/blob/main/ROADMAP.md" target="_blank" rel="noopener">Roadmap</a>
+    </div>
+    <div>
+      <strong>Community</strong>
+      <a href="https://github.com/rauppvj/clawdbar/issues" target="_blank" rel="noopener">Issues</a>
+      <a href="https://github.com/rauppvj/clawdbar/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener">Contributing</a>
+    </div>
+    <div>
+      <strong>Support</strong>
+      <a href="https://github.com/sponsors/rauppvj" target="_blank" rel="noopener">GitHub Sponsors</a>
+      <a href="https://www.buymeacoffee.com/rauppv" target="_blank" rel="noopener">Buy me a coffee</a>
+    </div>
+    <div>
+      <strong>About</strong>
+      <p class="footer-blurb">Made by <a href="https://github.com/rauppvj" target="_blank" rel="noopener">rauppvj</a>. MIT licensed.<br>Unofficial — not affiliated with Anthropic.</p>
+    </div>
+  </div>
+</footer>
+
+<script src="script.js"></script>
+</body>
+</html>

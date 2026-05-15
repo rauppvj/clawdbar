@@ -6,7 +6,7 @@
 
 ClawdBar polls Anthropic's Messages API once a minute with a 1-token Haiku ping, parses the `anthropic-ratelimit-unified-*` headers, and surfaces your **5 h session** and **7 d weekly** utilization in the menu bar — plus an optional floating overlay, threshold notifications, and a 7-day heatmap.
 
-![ClawdBar in action — menu-bar icon (top), popover (top right), floating overlay (bottom left)](docs/clawdbar.jpeg)
+![ClawdBar in action — menu-bar icon (top), popover (top right), floating overlay (bottom left)](docs/assets/hero-screenshot.jpeg)
 
 ## Install
 
