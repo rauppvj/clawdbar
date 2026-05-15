@@ -90,18 +90,21 @@ log "Assembling .app structure"
 cp "$BIN_PATH" "$APP_DIR/Contents/MacOS/$APP_NAME"
 chmod +x "$APP_DIR/Contents/MacOS/$APP_NAME"
 
-if [[ -d "$RESOURCE_BUNDLE" ]]; then
-    # SPM's auto-generated resource_bundle_accessor.swift looks up resources via
-    # Bundle(path: Bundle.main.bundlePath + "/ClawdBar_ClawdBar.bundle"),
-    # which for a wrapped .app resolves to the TOP of the .app — not the
-    # macOS-conventional Contents/Resources/. Local dev builds appeared to
-    # work only because the accessor's secondary fallback (the absolute
-    # path of the .build directory at compile time) happened to exist on
-    # the developer's machine; CI-built binaries crash on launch because
-    # that fallback path lives on the GitHub runner and is gone on user
-    # machines. Placing the resource bundle here is what actually makes
-    # Bundle.module resolve at runtime.
-    cp -R "$RESOURCE_BUNDLE" "$APP_DIR/"
+# Copy the package's Resources/ contents straight into Contents/Resources/
+# rather than dropping the SPM-generated `ClawdBar_ClawdBar.bundle` into the
+# .app. Two reasons:
+#   1. Codesign on CI runners (macOS 15 Sequoia) treats "unsealed contents
+#      present in the bundle root" as a fatal error, so the SPM bundle
+#      can't live at the top of the .app where SPM's auto-accessor
+#      expects it.
+#   2. FontRegistration was refactored to resolve resources via Bundle.main
+#      in the .app case, so we don't need SPM's accessor here at all.
+# The .lproj/ directories land in Contents/Resources/ directly, which is
+# what AppKit/SwiftUI's localization machinery looks for on Bundle.main.
+RESOURCES_SRC="$REPO_ROOT/Sources/$APP_NAME/Resources"
+if [[ -d "$RESOURCES_SRC" ]]; then
+    log "Copying app resources (fonts + .lproj) to Contents/Resources"
+    cp -R "$RESOURCES_SRC/." "$APP_DIR/Contents/Resources/"
 fi
 
 # 5. Info.plist
