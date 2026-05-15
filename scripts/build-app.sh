@@ -91,7 +91,17 @@ cp "$BIN_PATH" "$APP_DIR/Contents/MacOS/$APP_NAME"
 chmod +x "$APP_DIR/Contents/MacOS/$APP_NAME"
 
 if [[ -d "$RESOURCE_BUNDLE" ]]; then
-    cp -R "$RESOURCE_BUNDLE" "$APP_DIR/Contents/Resources/"
+    # SPM's auto-generated resource_bundle_accessor.swift looks up resources via
+    # Bundle(path: Bundle.main.bundlePath + "/ClawdBar_ClawdBar.bundle"),
+    # which for a wrapped .app resolves to the TOP of the .app — not the
+    # macOS-conventional Contents/Resources/. Local dev builds appeared to
+    # work only because the accessor's secondary fallback (the absolute
+    # path of the .build directory at compile time) happened to exist on
+    # the developer's machine; CI-built binaries crash on launch because
+    # that fallback path lives on the GitHub runner and is gone on user
+    # machines. Placing the resource bundle here is what actually makes
+    # Bundle.module resolve at runtime.
+    cp -R "$RESOURCE_BUNDLE" "$APP_DIR/"
 fi
 
 # 5. Info.plist
