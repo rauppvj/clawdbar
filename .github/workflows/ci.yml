@@ -45,6 +45,73 @@ jobs:
       - name: Test
         run: swift test --parallel
 
+  build-windows:
+    name: Build (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # No SDK install step on purpose: windows/ builds with the C# compiler
+      # that ships inside Windows itself, so there is nothing to restore and
+      # nothing to cache. If this step ever fails, the runner image dropped
+      # .NET Framework 4.x — that is the thing to investigate, not the build.
+      - name: Show toolchain
+        shell: pwsh
+        run: |
+          $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+          if (-not (Test-Path $csc)) { throw "in-box csc.exe not found at $csc" }
+          $release = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full').Release
+          Write-Host ".NET Framework release: $release"
+          # Read the version off the file: this csc predates /version and would
+          # exit 1 on an unrecognized option, failing the step.
+          Write-Host "csc: $((Get-Item $csc).VersionInfo.ProductVersion)"
+
+      - name: Build app
+        shell: cmd
+        working-directory: windows
+        run: call .\build.cmd
+
+      - name: Build dev harness
+        shell: cmd
+        working-directory: windows
+        run: call .\build-preview.cmd
+
+      - name: Smoke test
+        shell: pwsh
+        working-directory: windows
+        run: |
+          $exe = "dist\ClawdBar.exe"
+          if (-not (Test-Path $exe)) { throw "$exe was not produced" }
+
+          # The embedded font alone is ~118 KB, so anything much smaller means
+          # the /resource: switches silently stopped taking effect.
+          $size = (Get-Item $exe).Length
+          Write-Host "ClawdBar.exe: $size bytes"
+          if ($size -lt 200KB) { throw "binary is $size bytes — embedded resources are missing" }
+
+          # It is a GUI-subsystem exe, so the shell will not wait on it.
+          $p = Start-Process -FilePath $exe -ArgumentList "--help" -NoNewWindow -Wait -PassThru `
+                 -RedirectStandardOutput help.txt
+          if ($p.ExitCode -ne 0) { throw "--help exited $($p.ExitCode)" }
+          Get-Content help.txt
+
+          # No Claude Code login on a runner, so this must fail cleanly with a
+          # readable message rather than crash — that path is easy to break.
+          $p = Start-Process -FilePath $exe -ArgumentList "--probe-credentials" -NoNewWindow -Wait -PassThru `
+                 -RedirectStandardOutput probe.txt
+          $out = Get-Content probe.txt -Raw
+          Write-Host $out
+          if ($p.ExitCode -eq 0) { throw "--probe-credentials unexpectedly succeeded on a runner" }
+          if ($out -notmatch "No credentials found") { throw "unexpected failure mode from --probe-credentials" }
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClawdBar-windows
+          path: windows/dist/ClawdBar.exe
+          if-no-files-found: error
+
   release:
     name: Build DMG for release
     runs-on: macos-latest
