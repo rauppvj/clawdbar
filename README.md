@@ -32,6 +32,22 @@ xattr -dr com.apple.quarantine /Applications/ClawdBar.app
 
 The onboarding window will walk you through the keychain prompt and appearance.
 
+## Windows
+
+A native Windows port lives in [`windows/`](./windows) — tray icon, panel, floating
+overlay, heatmap and tamagotchi, same palette and same Press Start 2P typeface.
+
+It is C# on WinForms + GDI+, built with the C# compiler that already ships inside Windows,
+so there is no SDK or package feed to install:
+
+```cmd
+cd windows
+build.cmd
+```
+
+See [windows/README.md](./windows/README.md) for the platform differences and why each one
+was made.
+
 ## Uninstall
 
 ### If you installed via Homebrew
