@@ -15,6 +15,7 @@ namespace ClawdBar
     {
         private const string ProbeCredentialsFlag = "--probe-credentials";
         private const string ProbeApiFlag = "--probe-api";
+        private const string ProbeStatusFlag = "--probe-status";
         private const string ResetFlag = "--reset-onboarding";
         private const string HelpFlag = "--help";
 
@@ -31,6 +32,7 @@ namespace ClawdBar
                 string arg = args[i];
                 if (arg == ProbeCredentialsFlag) return RunConsole(ProbeCredentials);
                 if (arg == ProbeApiFlag) return RunConsole(ProbeApi);
+                if (arg == ProbeStatusFlag) return RunConsole(ProbeStatus);
                 if (arg == ResetFlag) return RunConsole(ResetOnboarding);
                 if (arg == HelpFlag || arg == "-h" || arg == "/?") return RunConsole(PrintHelp);
             }
@@ -72,6 +74,7 @@ namespace ClawdBar
             Console.WriteLine("  (no flags)                launch the tray app");
             Console.WriteLine("  " + ProbeCredentialsFlag + "     inspect stored credentials (shape only)");
             Console.WriteLine("  " + ProbeApiFlag + "             spend 1 Haiku token, dump anthropic-* headers");
+            Console.WriteLine("  " + ProbeStatusFlag + "          fetch status.claude.com (no credentials, no tokens)");
             Console.WriteLine("  " + ResetFlag + "       delete the settings file");
             return 0;
         }
@@ -137,6 +140,67 @@ namespace ClawdBar
             }
         }
 
+        /// Fetches status.claude.com and prints what the UI would render. No
+        /// credentials, no tokens spent.
+        private static int ProbeStatus()
+        {
+            var client = new StatusPageClient();
+            Console.WriteLine("ClawdBar service-status probe");
+            Console.WriteLine("=============================");
+            Console.WriteLine("Endpoint: " + client.SummaryUrl);
+            Console.WriteLine();
+
+            ServiceStatus status;
+            try
+            {
+                status = client.FetchStatusAsync().GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Result: FAILED");
+                Console.WriteLine("Error: " + ex.Message);
+                return 1;
+            }
+
+            Console.WriteLine("Page indicator : " + ServiceLevels.Name(status.Level) + " - " + status.Summary);
+            Console.WriteLine("Worst level    : " + ServiceLevels.Name(status.WorstLevel) +
+                " (" + ServiceLevels.Badge(status.WorstLevel) + ")");
+            Console.WriteLine();
+            Console.WriteLine("Components:");
+            for (int i = 0; i < status.Components.Count; i++)
+            {
+                ServiceComponent component = status.Components[i];
+                Console.WriteLine("  " + Pad(component.ShortName, 12) + " " +
+                    Pad(ServiceLevels.Badge(component.Level), 9) + " " + component.Name);
+            }
+            Console.WriteLine();
+
+            if (status.Incidents.Count == 0)
+            {
+                Console.WriteLine("Incidents: none unresolved");
+                return 0;
+            }
+            Console.WriteLine("Incidents:");
+            for (int i = 0; i < status.Incidents.Count; i++)
+            {
+                ServiceIncident incident = status.Incidents[i];
+                Console.WriteLine("  [" + ServiceLevels.Name(incident.Impact) + "/" + incident.Stage + "] " + incident.Name);
+                if (!string.IsNullOrEmpty(incident.LatestUpdate))
+                {
+                    string body = incident.LatestUpdate.Replace("\r", " ").Replace("\n", " ");
+                    if (body.Length > 160) body = body.Substring(0, 160);
+                    Console.WriteLine("    " + body);
+                }
+                if (!string.IsNullOrEmpty(incident.Url)) Console.WriteLine("    " + incident.Url);
+            }
+            return 0;
+        }
+
+        private static string Pad(string text, int width)
+        {
+            return text == null ? "".PadRight(width) : text.PadRight(width);
+        }
+
         private static string Fmt(double? percent)
         {
             return percent.HasValue
@@ -167,6 +231,7 @@ namespace ClawdBar
     {
         private readonly AppSettings _settings;
         private readonly UsageDaemon _daemon;
+        private readonly StatusMonitor _status;
         private readonly NotificationManager _notifications;
         private readonly NotifyIcon _tray;
 
@@ -182,6 +247,11 @@ namespace ClawdBar
             var client = new AnthropicApiClient(_settings.ApiBaseUrl, _settings.ApiModel);
             _daemon = new UsageDaemon(client, new CredentialStore(), new UsageHistoryStore());
             _daemon.PollInterval = _settings.PollInterval;
+
+            // Status polling is independent of credentials and of onboarding —
+            // the page is public, so it can start right away and give a fresh
+            // install something true to show on first open.
+            _status = new StatusMonitor();
 
             _notifications = new NotificationManager(DeliverNotification);
 
@@ -208,6 +278,7 @@ namespace ClawdBar
             }
 
             _daemon.Start();
+            if (_settings.ServiceStatusEnabled) _status.Start();
             RefreshTray();
 
             if (_settings.OverlayEnabledOnLaunch) ToggleOverlay();
@@ -279,7 +350,7 @@ namespace ClawdBar
         {
             if (_popup == null || _popup.IsDisposed)
             {
-                _popup = new PopupForm(_daemon, _settings, ToggleOverlay, ShowSettings, Quit);
+                _popup = new PopupForm(_daemon, _status, _settings, ToggleOverlay, ShowSettings, Quit);
             }
             if (_popup.Visible)
             {
@@ -293,7 +364,7 @@ namespace ClawdBar
         {
             if (_overlay == null || _overlay.IsDisposed)
             {
-                _overlay = new OverlayForm(_daemon, _settings);
+                _overlay = new OverlayForm(_daemon, _status, _settings);
             }
             _overlay.ToggleVisible();
         }
@@ -305,7 +376,7 @@ namespace ClawdBar
                 _settingsForm.Activate();
                 return;
             }
-            _settingsForm = new SettingsForm(_settings, _daemon, OnSettingsChanged, ResetOverlaySize);
+            _settingsForm = new SettingsForm(_settings, _daemon, _status, OnSettingsChanged, ResetOverlaySize);
             _settingsForm.FormClosed += delegate { _settingsForm = null; };
             _settingsForm.Show();
             _settingsForm.Activate();
@@ -314,6 +385,16 @@ namespace ClawdBar
         private void OnSettingsChanged()
         {
             _daemon.PollInterval = _settings.PollInterval;
+
+            if (_settings.ServiceStatusEnabled && !_status.IsPolling)
+            {
+                _status.Start();
+            }
+            else if (!_settings.ServiceStatusEnabled && _status.IsPolling)
+            {
+                _status.Stop();
+            }
+
             RefreshTray();
             if (_overlay != null && !_overlay.IsDisposed)
             {
@@ -344,6 +425,7 @@ namespace ClawdBar
                     _daemon.UsageFetched -= OnUsageFetched;
                     _daemon.Dispose();
                 }
+                if (_status != null) _status.Dispose();
                 if (_tray != null)
                 {
                     _tray.Visible = false;

@@ -31,6 +31,7 @@ namespace ClawdBar
         public const string ApiBaseUrl = "https://api.anthropic.com";
         public const string ApiModel = "claude-haiku-4-5-20251001";
         public const int OverlaySize = 200;
+        public const bool ServiceStatusEnabled = true;
     }
 
     /// Replaces macOS UserDefaults with a JSON file under %APPDATA%. Key names
@@ -54,6 +55,11 @@ namespace ClawdBar
         public bool NotifyForWeekly;
         public string ApiBaseUrl;
         public string ApiModel;
+
+        // Whether ClawdBar polls status.claude.com. Off means zero requests to
+        // that host and no status surfaces anywhere in the UI.
+        public bool ServiceStatusEnabled;
+
         public bool OnboardingDone;
 
         // Windows-only: the overlay is a real top-level window, so we persist
@@ -110,6 +116,7 @@ namespace ClawdBar
             NotifyForWeekly = Defaults.NotifyForWeekly;
             ApiBaseUrl = Defaults.ApiBaseUrl;
             ApiModel = Defaults.ApiModel;
+            ServiceStatusEnabled = Defaults.ServiceStatusEnabled;
             OnboardingDone = false;
             OverlayX = 0;
             OverlayY = 0;
@@ -150,6 +157,7 @@ namespace ClawdBar
             NotifyForWeekly = Flag(root, Key.NotifyForWeekly, NotifyForWeekly);
             ApiBaseUrl = Str(root, Key.ApiBaseUrl, ApiBaseUrl);
             ApiModel = Str(root, Key.ApiModel, ApiModel);
+            ServiceStatusEnabled = Flag(root, Key.ServiceStatusEnabled, ServiceStatusEnabled);
             OnboardingDone = Flag(root, Key.OnboardingDone, OnboardingDone);
             OverlayX = (int)Num(root, Key.OverlayX, OverlayX);
             OverlayY = (int)Num(root, Key.OverlayY, OverlayY);
@@ -180,6 +188,7 @@ namespace ClawdBar
             root[Key.NotifyForWeekly] = JsonValue.From(NotifyForWeekly);
             root[Key.ApiBaseUrl] = JsonValue.From(ApiBaseUrl);
             root[Key.ApiModel] = JsonValue.From(ApiModel);
+            root[Key.ServiceStatusEnabled] = JsonValue.From(ServiceStatusEnabled);
             root[Key.OnboardingDone] = JsonValue.From(OnboardingDone);
             root[Key.OverlayX] = JsonValue.From(OverlayX);
             root[Key.OverlayY] = JsonValue.From(OverlayY);
@@ -297,6 +306,7 @@ namespace ClawdBar
             public const string NotifyForWeekly = "clawdbar.notifications.weekly";
             public const string ApiBaseUrl = "clawdbar.api.baseURL";
             public const string ApiModel = "clawdbar.api.model";
+            public const string ServiceStatusEnabled = "clawdbar.serviceStatus.enabled";
             public const string OnboardingDone = "clawdbar.onboarding.done";
             public const string OverlayX = "clawdbar.overlay.x";
             public const string OverlayY = "clawdbar.overlay.y";

@@ -88,6 +88,9 @@ unauthenticated, no usage data, no tokens spent — so a failing request can be
 told apart from your own rate limit. **Preferences → Data Source → Service
 status** turns it off, and off means zero traffic to that host.
 
+The Windows port has the same feature at the same cadence, with the same toggle
+and a `ClawdBar.exe --probe-status` probe alongside the existing ones.
+
 Still open here: turning a status change into a notification, which is the
 obvious next step now that the monitor knows when the worst level moves.
 

@@ -35,7 +35,8 @@ The onboarding window will walk you through the keychain prompt and appearance.
 ## Windows
 
 A native Windows port lives in [`windows/`](./windows) — tray icon, panel, floating
-overlay, heatmap and tamagotchi, same palette and same Press Start 2P typeface.
+overlay, heatmap, tamagotchi and service status, same palette and same Press Start 2P
+typeface.
 
 It is C# on WinForms + GDI+, built with the C# compiler that already ships inside Windows,
 so there is no SDK or package feed to install:

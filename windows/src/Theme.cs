@@ -42,6 +42,24 @@ namespace ClawdBar
             }
         }
 
+        /// Status-page levels get their own mapping so the service-status
+        /// surfaces read like the website: green operational, purple
+        /// maintenance, then the same yellow -> orange -> red ladder as usage
+        /// severity.
+        public static Color ColorFor(ServiceLevel level)
+        {
+            switch (level)
+            {
+                case ServiceLevel.Operational: return ColorFor(Severity.Ok);
+                case ServiceLevel.Maintenance: return AccentCool;
+                case ServiceLevel.Degraded: return ColorFor(Severity.Warning);
+                case ServiceLevel.PartialOutage: return ColorFor(Severity.Danger);
+                case ServiceLevel.MajorOutage:
+                case ServiceLevel.Critical: return ColorFor(Severity.Critical);
+                default: return TextMuted;
+            }
+        }
+
         public static Color Fade(Color color, double alpha)
         {
             int a = (int)Math.Round(Math.Max(0, Math.Min(1, alpha)) * 255);

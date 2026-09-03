@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Globalization;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace ClawdBar
@@ -37,6 +39,9 @@ namespace ClawdBar
         public const string ChevronLeft = "";
         public const string ChevronRight = "";
 
+        /// "OpenInNewWindow" — the affordance that leaves for status.claude.com.
+        public const string OpenExternal = "";
+
         public static Font Font(float size)
         {
             try
@@ -56,16 +61,24 @@ namespace ClawdBar
     internal sealed class PopupForm : Form
     {
         private const int PanelWidth = 340;
-        private const int PanelHeight = 306;
+        /// Height without the service-status block. That block is added on top
+        /// whenever the feature is on, because its size depends on how many
+        /// rows status.claude.com is currently listing.
+        private const int PanelBaseHeight = 306;
 
         private readonly UsageDaemon _daemon;
+        private readonly StatusMonitor _status;
         private readonly AppSettings _settings;
         private readonly Action _onToggleOverlay;
         private readonly Action _onOpenSettings;
         private readonly Action _onQuit;
 
         private readonly List<HitButton> _buttons = new List<HitButton>();
+        /// Rebuilt on every paint: the plan pill's tooltip and the
+        /// service-status affordances, which move with the snapshot.
+        private readonly List<HitButton> _hotspots = new List<HitButton>();
         private readonly Timer _tick;
+        private int _panelHeight = PanelBaseHeight;
         private readonly ToolTip _tips = new ToolTip();
         private HitButton _hovered;
         private int _moodPhase;
@@ -75,10 +88,11 @@ namespace ClawdBar
         /// inspected while something else holds focus.
         public bool AutoHideOnDeactivate = true;
 
-        public PopupForm(UsageDaemon daemon, AppSettings settings,
+        public PopupForm(UsageDaemon daemon, StatusMonitor status, AppSettings settings,
             Action onToggleOverlay, Action onOpenSettings, Action onQuit)
         {
             _daemon = daemon;
+            _status = status;
             _settings = settings;
             _onToggleOverlay = onToggleOverlay;
             _onOpenSettings = onOpenSettings;
@@ -87,7 +101,7 @@ namespace ClawdBar
             FormBorderStyle = FormBorderStyle.None;
             ShowInTaskbar = false;
             StartPosition = FormStartPosition.Manual;
-            ClientSize = new Size(PanelWidth, PanelHeight);
+            ClientSize = new Size(PanelWidth, _panelHeight);
             BackColor = Theme.BgDeep;
             KeyPreview = true;
             DoubleBuffered = true;
@@ -105,6 +119,7 @@ namespace ClawdBar
             };
 
             _daemon.Changed += OnDaemonChanged;
+            if (_status != null) _status.Changed += OnStatusChanged;
         }
 
         private void OnDaemonChanged(object sender, EventArgs e)
@@ -113,11 +128,24 @@ namespace ClawdBar
             Invalidate();
         }
 
+        /// A fresh snapshot can add or drop rows, so the panel is re-measured
+        /// before it repaints.
+        private void OnStatusChanged(object sender, EventArgs e)
+        {
+            if (IsDisposed) return;
+            Relayout();
+            if (Visible) Invalidate();
+        }
+
         private void BuildButtons()
         {
             var refresh = new HitButton(Glyphs.Refresh, "Refresh", async delegate
             {
+                Task status = _status != null && _status.IsPolling
+                    ? _status.RefreshNowAsync()
+                    : null;
                 await _daemon.RefreshNowAsync();
+                if (status != null) await status;
             });
             var overlay = new HitButton(Glyphs.Overlay, "Toggle floating window", delegate
             {
@@ -138,7 +166,12 @@ namespace ClawdBar
             _buttons.Add(settings);
             _buttons.Add(quit);
 
-            float y = PanelHeight - 36;
+            PositionButtons();
+        }
+
+        private void PositionButtons()
+        {
+            float y = _panelHeight - 36;
             float x = 8;
             for (int i = 0; i < 3; i++)
             {
@@ -148,10 +181,32 @@ namespace ClawdBar
             _buttons[3].Bounds = new RectangleF(PanelWidth - 38, y, 30, 28);
         }
 
+        /// Re-measures the panel around the current status snapshot. While the
+        /// panel is open it grows upwards, so the action row stays where the
+        /// cursor left it instead of sliding under the taskbar.
+        private void Relayout()
+        {
+            int height = PanelBaseHeight + StatusBlockHeight();
+            if (height == _panelHeight) return;
+
+            int delta = height - _panelHeight;
+            _panelHeight = height;
+            ClientSize = new Size(PanelWidth, _panelHeight);
+            PositionButtons();
+
+            if (!Visible) return;
+            Rectangle work = Screen.FromControl(this).WorkingArea;
+            int top = Location.Y - delta;
+            if (top + _panelHeight > work.Bottom - 4) top = work.Bottom - _panelHeight - 4;
+            if (top < work.Top + 4) top = work.Top + 4;
+            Location = new Point(Location.X, top);
+        }
+
         /// Positions the panel next to the tray, adapting to whichever screen
         /// edge the taskbar is docked on.
-        public void ShowNearTray()
+        public async void ShowNearTray()
         {
+            Relayout();
             Point cursor = Cursor.Position;
             Screen screen = Screen.FromPoint(cursor);
             Rectangle work = screen.WorkingArea;
@@ -160,22 +215,35 @@ namespace ClawdBar
             int x = cursor.X - PanelWidth / 2;
             int y;
 
-            if (work.Bottom < full.Bottom) y = work.Bottom - PanelHeight - 8;          // taskbar at bottom
+            if (work.Bottom < full.Bottom) y = work.Bottom - _panelHeight - 8;         // taskbar at bottom
             else if (work.Top > full.Top) y = work.Top + 8;                            // taskbar at top
-            else if (work.Right < full.Right) { x = work.Right - PanelWidth - 8; y = cursor.Y - PanelHeight / 2; }
-            else if (work.Left > full.Left) { x = work.Left + 8; y = cursor.Y - PanelHeight / 2; }
-            else y = work.Bottom - PanelHeight - 8;
+            else if (work.Right < full.Right) { x = work.Right - PanelWidth - 8; y = cursor.Y - _panelHeight / 2; }
+            else if (work.Left > full.Left) { x = work.Left + 8; y = cursor.Y - _panelHeight / 2; }
+            else y = work.Bottom - _panelHeight - 8;
 
             if (x < work.Left + 4) x = work.Left + 4;
             if (x + PanelWidth > work.Right - 4) x = work.Right - PanelWidth - 4;
             if (y < work.Top + 4) y = work.Top + 4;
-            if (y + PanelHeight > work.Bottom - 4) y = work.Bottom - PanelHeight - 4;
+            if (y + _panelHeight > work.Bottom - 4) y = work.Bottom - _panelHeight - 4;
 
             Location = new Point(x, y);
             _tick.Start();
             Show();
             Activate();
             Invalidate();
+
+            // Opening the panel is the moment the answer matters most, so top
+            // the snapshot up; RefreshIfStale coalesces repeated opens.
+            if (_status != null && _status.IsPolling) await _status.RefreshIfStaleAsync(60);
+        }
+
+        /// ShowNearTray measures the panel before placing it, but the preview
+        /// harness (and any future caller) shows the form directly — measure
+        /// here too so the status block is never clipped.
+        protected override void OnVisibleChanged(EventArgs e)
+        {
+            base.OnVisibleChanged(e);
+            if (Visible) Relayout();
         }
 
         protected override void OnDeactivate(EventArgs e)
@@ -202,16 +270,12 @@ namespace ClawdBar
         protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);
-            HitButton found = null;
-            for (int i = 0; i < _buttons.Count; i++)
-            {
-                if (_buttons[i].Bounds.Contains(e.Location)) { found = _buttons[i]; break; }
-            }
+            HitButton found = Hit(e.Location);
             if (!ReferenceEquals(found, _hovered))
             {
                 _hovered = found;
                 _tips.SetToolTip(this, found == null ? null : found.Tooltip);
-                Cursor = found == null ? Cursors.Default : Cursors.Hand;
+                Cursor = found == null || found.OnClick == null ? Cursors.Default : Cursors.Hand;
                 Invalidate();
             }
         }
@@ -219,15 +283,38 @@ namespace ClawdBar
         protected override void OnMouseClick(MouseEventArgs e)
         {
             base.OnMouseClick(e);
+            HitButton hit = Hit(e.Location);
+            if (hit == null || !hit.Enabled || hit.OnClick == null) return;
+            hit.OnClick();
+            Invalidate();
+        }
+
+        /// Action buttons first, then whatever the last paint left behind — the
+        /// two never overlap, and this keeps the fixed row authoritative.
+        private HitButton Hit(Point location)
+        {
             for (int i = 0; i < _buttons.Count; i++)
             {
-                if (_buttons[i].Enabled && _buttons[i].Bounds.Contains(e.Location))
-                {
-                    _buttons[i].OnClick();
-                    Invalidate();
-                    return;
-                }
+                if (_buttons[i].Bounds.Contains(location)) return _buttons[i];
             }
+            for (int i = 0; i < _hotspots.Count; i++)
+            {
+                if (_hotspots[i].Bounds.Contains(location)) return _hotspots[i];
+            }
+            return null;
+        }
+
+        private HitButton AddHotspot(RectangleF bounds, string tooltip, Action onClick)
+        {
+            var hotspot = new HitButton(null, tooltip, onClick);
+            hotspot.Bounds = bounds;
+            _hotspots.Add(hotspot);
+            return hotspot;
+        }
+
+        public static void OpenInBrowser(string url)
+        {
+            try { Process.Start(url); } catch { }
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -235,6 +322,8 @@ namespace ClawdBar
             Graphics g = e.Graphics;
             Draw.HighQuality(g);
             g.Clear(Theme.BgDeep);
+
+            _hotspots.Clear();
 
             UsageData usage = _daemon.Usage;
             float y = 14;
@@ -253,7 +342,17 @@ namespace ClawdBar
 
             PaintFooter(g, usage, y);
 
-            PaintDivider(g, PanelHeight - 45);
+            // The status block is anchored to the bottom, right above the
+            // action row, so the usage half of the panel never moves.
+            int block = StatusBlockHeight();
+            if (block > 0)
+            {
+                float top = _panelHeight - 45 - block;
+                PaintDivider(g, top);
+                PaintServiceStatus(g, top + 12);
+            }
+
+            PaintDivider(g, _panelHeight - 45);
             PaintActionRow(g);
         }
 
@@ -279,7 +378,9 @@ namespace ClawdBar
             string plan = PlanLabel();
             if (plan != null)
             {
-                x = PaintBadge(g, plan, x, y + 1, Theme.Fade(Theme.AccentWarm, 0.15), Theme.AccentWarm) + 6;
+                float badgeRight = PaintBadge(g, plan, x, y + 1, Theme.Fade(Theme.AccentWarm, 0.15), Theme.AccentWarm);
+                AddHotspot(new RectangleF(x, y, badgeRight - x, 18), PlanBadge.Help, null);
+                x = badgeRight + 6;
             }
             string binding = BindingLabel();
             if (binding != null)
@@ -393,22 +494,208 @@ namespace ClawdBar
             }
         }
 
-        /// User-friendly plan name from the OAuth token's subscriptionType.
+        // ----------------------------------------------------- service status
+
+        private const int StatusTitleHeight = 16;
+        private const int StatusHeadlineHeight = 16;
+        private const int StatusRowHeight = 13;
+        private const int StatusIncidentHeight = 34;
+
+        /// How much room the service-status section needs for the snapshot it
+        /// is holding right now — 0 when the feature is switched off.
+        private int StatusBlockHeight()
+        {
+            if (_status == null || !_settings.ServiceStatusEnabled) return 0;
+
+            int height = 12 + StatusTitleHeight;
+            ServiceStatus snapshot = _status.Status;
+            if (snapshot == null) return height + StatusHeadlineHeight + 12;
+
+            height += StatusHeadlineHeight;
+            height += ((snapshot.Components.Count + 1) / 2) * StatusRowHeight;
+            if (snapshot.Incidents.Count > 0) height += 6 + StatusIncidentHeight;
+            if (snapshot.Incidents.Count > 1) height += 12;
+            return height + 12;
+        }
+
+        /// Compact mirror of status.claude.com: overall indicator, a dot per
+        /// component, and the headline of any live incident. Answers the
+        /// question a red usage number can't — "is the API itself down?".
+        private void PaintServiceStatus(Graphics g, float y)
+        {
+            const float left = 16;
+            const float right = PanelWidth - 16;
+
+            Draw.TrackedString(g, "SERVICE STATUS", Theme.Retro(10), Theme.TextSecondary, left, y, 2f);
+
+            Font glyphFont = Glyphs.Font(11);
+            SizeF glyphSize = Draw.Measure(g, Glyphs.OpenExternal, glyphFont);
+            var glyphBounds = new RectangleF(right - glyphSize.Width - 4, y - 3, glyphSize.Width + 8, glyphSize.Height + 6);
+            AddHotspot(glyphBounds, "Open status.claude.com",
+                delegate { OpenInBrowser(ServiceStatus.PageUrl); });
+            Draw.String(g, Glyphs.OpenExternal, glyphFont,
+                IsHovering(glyphBounds) ? Theme.TextPrimary : Theme.TextSecondary,
+                glyphBounds.X + 4, glyphBounds.Y + 3);
+
+            Font small = Theme.Retro(9);
+            if (_status.IsFetching)
+            {
+                PaintSpinner(g, new RectangleF(glyphBounds.X - 18, y, 10, 10));
+            }
+            else if (_status.Status != null && _status.SnapshotAgeSeconds.HasValue)
+            {
+                string age = "upd " + ShortAge(_status.SnapshotAgeSeconds.Value);
+                float width = Draw.Measure(g, age, small).Width;
+                Draw.String(g, age, small, Theme.TextMuted, glyphBounds.X - 8 - width, y + 1);
+            }
+
+            y += StatusTitleHeight;
+
+            ServiceStatus snapshot = _status.Status;
+            if (snapshot == null)
+            {
+                Draw.String(g, _status.LastError == null ? "CHECKING..." : UnreachableCaption(_status.LastError),
+                    small, Theme.TextMuted, left, y);
+                return;
+            }
+
+            // Headline: the page's own wording, coloured by the worst level we
+            // can see — which may be a step ahead of the page indicator.
+            ServiceLevel worst = snapshot.WorstLevel;
+            PaintDot(g, left + 1, y + 4, 7, worst);
+            Font headlineFont = Theme.Retro(10);
+            float headlineWidth = right - (left + 14);
+            if (_status.LastError != null) headlineWidth -= 44;
+            Draw.String(g, Fit(g, snapshot.Headline, headlineFont, headlineWidth),
+                headlineFont, Theme.ColorFor(worst), left + 14, y);
+            // A snapshot kept on screen through a failed refresh should say so.
+            if (_status.LastError != null)
+            {
+                float width = Draw.Measure(g, "STALE", small).Width;
+                Draw.String(g, "STALE", small, Theme.TextMuted, right - width, y + 1);
+            }
+            y += StatusHeadlineHeight;
+
+            float columnWidth = (right - left) / 2f - 6;
+            for (int i = 0; i < snapshot.Components.Count; i++)
+            {
+                ServiceComponent component = snapshot.Components[i];
+                float x = left + (i % 2) * ((right - left) / 2f);
+                float rowY = y + (i / 2) * StatusRowHeight;
+                PaintComponentRow(g, component, x, rowY, columnWidth);
+            }
+            y += ((snapshot.Components.Count + 1) / 2) * StatusRowHeight;
+
+            if (snapshot.Incidents.Count == 0) return;
+
+            y += 6;
+            PaintIncident(g, snapshot.Incidents[0], left, y, right - left);
+            y += StatusIncidentHeight;
+
+            if (snapshot.Incidents.Count > 1)
+            {
+                string more = "+" + (snapshot.Incidents.Count - 1).ToString(CultureInfo.InvariantCulture) +
+                    (snapshot.Incidents.Count == 2 ? " more incident" : " more incidents");
+                Draw.String(g, more, Theme.Retro(8), Theme.TextMuted, left, y + 1);
+            }
+        }
+
+        private void PaintComponentRow(Graphics g, ServiceComponent component, float x, float y, float width)
+        {
+            PaintDot(g, x + 1, y + 3, 5, component.Level);
+
+            Font font = Theme.Retro(8);
+            float textX = x + 10;
+            float available = width - 10;
+
+            if (!component.IsHealthy)
+            {
+                string badge = ServiceLevels.Badge(component.Level);
+                float badgeWidth = Draw.Measure(g, badge, font).Width;
+                Draw.String(g, badge, font, Theme.ColorFor(component.Level), x + width - badgeWidth, y);
+                available -= badgeWidth + 4;
+            }
+
+            var bounds = new RectangleF(x, y, width, StatusRowHeight);
+            AddHotspot(bounds, component.Name, null);
+            Draw.String(g, Fit(g, component.ShortName, font, available), font,
+                component.IsHealthy ? Theme.TextSecondary : Theme.TextPrimary, textX, y);
+        }
+
+        private void PaintIncident(Graphics g, ServiceIncident incident, float x, float y, float width)
+        {
+            var bounds = new RectangleF(x, y, width, StatusIncidentHeight - 4);
+            bool hot = IsHovering(bounds);
+            Draw.FillRounded(g, bounds, 6, hot ? Theme.BgRaised : Theme.BgPanel);
+
+            string tooltip = incident.Name;
+            if (!string.IsNullOrEmpty(incident.LatestUpdate)) tooltip += "\r\n\r\n" + incident.LatestUpdate;
+            string url = string.IsNullOrEmpty(incident.Url) ? ServiceStatus.PageUrl : incident.Url;
+            AddHotspot(bounds, tooltip, delegate { OpenInBrowser(url); });
+
+            Font font = Theme.Retro(8);
+            Draw.String(g, "!", Theme.Retro(9), Theme.ColorFor(incident.Impact), x + 9, y + 5);
+            Draw.String(g, Fit(g, incident.Name, font, width - 30), font, Theme.TextPrimary, x + 20, y + 5);
+            if (incident.Stage.Length > 0)
+            {
+                Draw.String(g, incident.Stage.ToUpperInvariant(), font, Theme.TextMuted, x + 20, y + 17);
+            }
+        }
+
+        private void PaintDot(Graphics g, float x, float y, float size, ServiceLevel level)
+        {
+            Color color = Theme.ColorFor(level);
+            using (var glow = new SolidBrush(Theme.Fade(color, ServiceLevels.IsHealthy(level) ? 0.25 : 0.4)))
+            {
+                g.FillEllipse(glow, x - 2, y - 2, size + 4, size + 4);
+            }
+            using (var brush = new SolidBrush(color))
+            {
+                g.FillEllipse(brush, x, y, size, size);
+            }
+        }
+
+        private bool IsHovering(RectangleF bounds)
+        {
+            return _hovered != null && bounds.Contains(
+                _hovered.Bounds.X + _hovered.Bounds.Width / 2f,
+                _hovered.Bounds.Y + _hovered.Bounds.Height / 2f);
+        }
+
+        /// Trims to fit the column, because a Statuspage name is written for a
+        /// browser and this panel is 340 px wide.
+        private static string Fit(Graphics g, string text, Font font, float maxWidth)
+        {
+            if (string.IsNullOrEmpty(text)) return "";
+            if (Draw.Measure(g, text, font).Width <= maxWidth) return text;
+            string trimmed = text;
+            while (trimmed.Length > 1 && Draw.Measure(g, trimmed + "..", font).Width > maxWidth)
+            {
+                trimmed = trimmed.Substring(0, trimmed.Length - 1);
+            }
+            return trimmed + "..";
+        }
+
+        private static string UnreachableCaption(string error)
+        {
+            return error != null && error.IndexOf("network", StringComparison.OrdinalIgnoreCase) >= 0
+                ? "OFFLINE - STATUS UNKNOWN"
+                : "STATUS PAGE UNREACHABLE";
+        }
+
+        private static string ShortAge(double seconds)
+        {
+            if (seconds < 5) return "now";
+            if (seconds < 60) return ((int)seconds).ToString(CultureInfo.InvariantCulture) + "s";
+            if (seconds < 3600) return ((int)(seconds / 60)).ToString(CultureInfo.InvariantCulture) + "m";
+            return ((int)(seconds / 3600)).ToString(CultureInfo.InvariantCulture) + "h";
+        }
+
+        /// User-friendly plan name pulled from the OAuth token's claims.
+        /// See PlanBadge for why this can lag a plan change.
         private string PlanLabel()
         {
-            string sub = _daemon.SubscriptionType;
-            if (string.IsNullOrEmpty(sub)) return null;
-            switch (sub.ToLowerInvariant())
-            {
-                case "max":
-                    string tier = _daemon.RateLimitTier;
-                    if (tier != null && tier.ToLowerInvariant().IndexOf("20x", StringComparison.Ordinal) >= 0)
-                        return "MAX 20X";
-                    return "MAX";
-                case "pro": return "PRO";
-                case "team": return "TEAM";
-                default: return sub.ToUpperInvariant();
-            }
+            return PlanBadge.Label(_daemon.SubscriptionType, _daemon.RateLimitTier);
         }
 
         /// Which window is currently the binding constraint, straight from the
@@ -459,6 +746,7 @@ namespace ClawdBar
             if (disposing)
             {
                 _daemon.Changed -= OnDaemonChanged;
+                if (_status != null) _status.Changed -= OnStatusChanged;
                 if (_tick != null) _tick.Dispose();
                 if (_tips != null) _tips.Dispose();
             }
