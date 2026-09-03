@@ -12,7 +12,7 @@ final class UsageDaemonTests: XCTestCase {
         )
         let client = MockUsageFetcher(behavior: .success(usage))
         let creds = MockCredentialLoader(.success(MockCredentialLoader.dummy))
-        let daemon = UsageDaemon(client: client, credentialStore: creds, autoStart: false)
+        let daemon = UsageDaemon(client: client, credentialStore: creds, history: .temporary(), autoStart: false)
 
         daemon.start()
         try await waitForUsage(daemon)
@@ -27,7 +27,7 @@ final class UsageDaemonTests: XCTestCase {
     func testNetworkErrorMarksStaleAndSurfacesMessage() async throws {
         let client = MockUsageFetcher(behavior: .failure(.network("connection refused")))
         let creds = MockCredentialLoader(.success(MockCredentialLoader.dummy))
-        let daemon = UsageDaemon(client: client, credentialStore: creds, autoStart: false)
+        let daemon = UsageDaemon(client: client, credentialStore: creds, history: .temporary(), autoStart: false)
 
         daemon.start()
         try await waitForError(daemon)
@@ -41,7 +41,7 @@ final class UsageDaemonTests: XCTestCase {
     func testUnauthorizedSurfacesAuthError() async throws {
         let client = MockUsageFetcher(behavior: .failure(.unauthorized))
         let creds = MockCredentialLoader(.success(MockCredentialLoader.dummy))
-        let daemon = UsageDaemon(client: client, credentialStore: creds, autoStart: false)
+        let daemon = UsageDaemon(client: client, credentialStore: creds, history: .temporary(), autoStart: false)
 
         daemon.start()
         try await waitForError(daemon)
@@ -53,7 +53,7 @@ final class UsageDaemonTests: XCTestCase {
     func testCredentialFailureSurfacedAsError() async throws {
         let client = MockUsageFetcher(behavior: .success(.empty))
         let creds = MockCredentialLoader(.failure(.notFound))
-        let daemon = UsageDaemon(client: client, credentialStore: creds, autoStart: false)
+        let daemon = UsageDaemon(client: client, credentialStore: creds, history: .temporary(), autoStart: false)
 
         daemon.start()
         try await waitForError(daemon)
@@ -69,7 +69,7 @@ final class UsageDaemonTests: XCTestCase {
             UsageData(sessionPercent: 1, sessionResetAt: nil, weeklyPercent: 1,
                      weeklyResetAt: nil, lastUpdated: .now, isStale: false, rawHeaders: [:])
         ))
-        let daemon = UsageDaemon(client: client, credentialStore: creds, autoStart: false)
+        let daemon = UsageDaemon(client: client, credentialStore: creds, history: .temporary(), autoStart: false)
         await daemon.refreshNow()
         await daemon.refreshNow()
         await daemon.refreshNow()
@@ -81,7 +81,7 @@ final class UsageDaemonTests: XCTestCase {
     func testUnauthorizedInvalidatesCredentialCache() async throws {
         let creds = MockCredentialLoader(.success(MockCredentialLoader.dummy))
         let client = MockUsageFetcher(behavior: .failure(.unauthorized))
-        let daemon = UsageDaemon(client: client, credentialStore: creds, autoStart: false)
+        let daemon = UsageDaemon(client: client, credentialStore: creds, history: .temporary(), autoStart: false)
         await daemon.refreshNow()
         await daemon.refreshNow()
         XCTAssertEqual(creds.loadCallCount, 2, "401 should drop the cache; next poll re-reads keychain")
@@ -91,7 +91,7 @@ final class UsageDaemonTests: XCTestCase {
     func testExplicitInvalidateForcesReload() async throws {
         let creds = MockCredentialLoader(.success(MockCredentialLoader.dummy))
         let client = MockUsageFetcher(behavior: .success(.empty))
-        let daemon = UsageDaemon(client: client, credentialStore: creds, autoStart: false)
+        let daemon = UsageDaemon(client: client, credentialStore: creds, history: .temporary(), autoStart: false)
         await daemon.refreshNow()
         XCTAssertEqual(creds.loadCallCount, 1)
         daemon.invalidateCredentials()
@@ -106,7 +106,7 @@ final class UsageDaemonTests: XCTestCase {
                      weeklyResetAt: nil, lastUpdated: .now, isStale: false, rawHeaders: [:])
         ))
         let creds = MockCredentialLoader(.success(MockCredentialLoader.dummy))
-        let daemon = UsageDaemon(client: client, credentialStore: creds, autoStart: false)
+        let daemon = UsageDaemon(client: client, credentialStore: creds, history: .temporary(), autoStart: false)
         await daemon.refreshNow()
         XCTAssertEqual(daemon.usage.sessionPercent, 5)
         XCTAssertGreaterThanOrEqual(client.callCount, 1)
@@ -132,6 +132,17 @@ final class UsageDaemonTests: XCTestCase {
 }
 
 // MARK: - Mocks
+
+extension UsageHistoryStore {
+    /// Scratch store for tests. Without this every daemon built here writes
+    /// its fixture samples into the developer's real ~/.clawdbar/history.jsonl.
+    static func temporary() -> UsageHistoryStore {
+        UsageHistoryStore(
+            fileURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("clawdbar-test-\(UUID().uuidString).jsonl")
+        )
+    }
+}
 
 final class MockUsageFetcher: UsageFetching, @unchecked Sendable {
     enum Behavior {
