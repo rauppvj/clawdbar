@@ -21,13 +21,21 @@ struct UsageSample: Codable, Equatable, Sendable {
 final class UsageHistoryStore {
     private(set) var samples: [UsageSample] = []
 
+    /// Where the app stores history. Also the default for `init`.
     static let storageURL: URL = {
         FileManager.default
             .homeDirectoryForCurrentUser
             .appendingPathComponent(".clawdbar/history.jsonl")
     }()
 
-    init() {
+    private let fileURL: URL
+
+    /// The path is injectable so tests can point at a scratch file. They used
+    /// to hit the hard-coded path, which meant every `swift test` run appended
+    /// fixture values (0 %, 42 %, 100 %) to the developer's real history and
+    /// skewed the heatmap, streaks and peak-hour stats.
+    init(fileURL: URL = UsageHistoryStore.storageURL) {
+        self.fileURL = fileURL
         loadFromDisk()
     }
 
@@ -44,7 +52,7 @@ final class UsageHistoryStore {
     private static let minValidTimestamp = Date(timeIntervalSince1970: 1_704_067_200)
 
     private func loadFromDisk() {
-        let url = Self.storageURL
+        let url = fileURL
         guard FileManager.default.fileExists(atPath: url.path) else { return }
         guard let data = try? Data(contentsOf: url),
               let text = String(data: data, encoding: .utf8) else { return }
@@ -77,7 +85,7 @@ final class UsageHistoryStore {
     }
 
     private func rewriteAll() {
-        let url = Self.storageURL
+        let url = fileURL
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .secondsSince1970
         var blob = Data()
@@ -90,7 +98,7 @@ final class UsageHistoryStore {
     }
 
     private func appendToDisk(_ sample: UsageSample) {
-        let url = Self.storageURL
+        let url = fileURL
         let directory = url.deletingLastPathComponent()
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
