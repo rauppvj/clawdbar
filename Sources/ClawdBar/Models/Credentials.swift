@@ -25,9 +25,4 @@ struct Credentials: Equatable, Sendable {
         guard let expiresAt else { return false }
         return Date() >= expiresAt
     }
-
-    var expiresSoon: Bool {
-        guard let expiresAt else { return false }
-        return expiresAt.timeIntervalSinceNow < 300
-    }
 }
