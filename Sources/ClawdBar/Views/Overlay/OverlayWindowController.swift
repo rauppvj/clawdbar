@@ -5,11 +5,13 @@ import Observation
 @MainActor
 final class OverlayWindowController: NSObject {
     private let daemon: UsageDaemon
+    private let status: StatusMonitor
     let settings = OverlaySettings()
     private(set) var window: NSPanel?
 
-    init(daemon: UsageDaemon) {
+    init(daemon: UsageDaemon, status: StatusMonitor) {
         self.daemon = daemon
+        self.status = status
         super.init()
     }
 
@@ -128,6 +130,7 @@ final class OverlayWindowController: NSObject {
         OverlayCarouselHost(
             daemon: daemon,
             settings: settings,
+            status: status,
             isResizable: resizable,
             onHide: { [weak self] in self?.hide() },
             onSnap: { [weak self] corner in self?.snap(to: corner) },

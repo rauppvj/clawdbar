@@ -26,6 +26,21 @@ enum Theme {
         }
     }
 
+    /// Status-page levels get their own mapping so the service-status
+    /// surfaces read like the website: green operational, purple maintenance,
+    /// then the same yellow → orange → red ladder as usage severity.
+    static func color(for level: ServiceStatus.Level) -> Color {
+        switch level {
+        case .operational:   return color(for: UsageData.Severity.ok)
+        case .unknown:       return textMuted
+        case .maintenance:   return accentCool
+        case .degraded:      return color(for: UsageData.Severity.warning)
+        case .partialOutage: return color(for: UsageData.Severity.danger)
+        case .majorOutage,
+             .critical:      return color(for: UsageData.Severity.critical)
+        }
+    }
+
     /// Press Start 2P (SIL OFL) when bundled successfully; system monospaced as a fallback.
     /// The font is registered eagerly at app launch via BundledFont.registerAll(),
     /// so by the time any view calls this, .custom() succeeds or silently falls back.

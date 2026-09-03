@@ -23,3 +23,18 @@
 "onboarding.credentials.body" = "ClawdBar reads your Claude Code OAuth token from the macOS Keychain. macOS will ask you to approve once; the token never leaves your machine except for the API call.";
 "onboarding.style.title" = "Pick a menu-bar style";
 "onboarding.done" = "Get started";
+
+/* Service status (status.claude.com) */
+"status.title" = "SERVICE STATUS";
+"status.allOperational" = "ALL SYSTEMS OK";
+"status.checking" = "CHECKING…";
+"status.unreachable" = "STATUS PAGE UNREACHABLE";
+"status.offline" = "OFFLINE — STATUS UNKNOWN";
+"status.stale" = "STALE";
+"status.openPage" = "Open status.claude.com";
+"status.level.operational" = "OK";
+"status.level.maintenance" = "MAINT";
+"status.level.degraded" = "DEGRADED";
+"status.level.partialOutage" = "PARTIAL";
+"status.level.majorOutage" = "OUTAGE";
+"status.level.critical" = "DOWN";

@@ -6,6 +6,7 @@ struct ClawdBarApp: App {
     @State private var settings: AppSettings
     @State private var notifications = NotificationManager()
     @State private var daemon: UsageDaemon
+    @State private var status: StatusMonitor
     @State private var overlay: OverlayWindowController?
     @State private var onboarding: OnboardingWindowController
 
@@ -22,6 +23,9 @@ struct ClawdBarApp: App {
         }
         if args.contains(ExportIconCommand.flag) {
             exit(ExportIconCommand.run(arguments: args))
+        }
+        if args.contains(StatusProbeCommand.flag) {
+            exit(StatusProbeCommand.run())
         }
         NSApplication.shared.setActivationPolicy(.accessory)
         BundledFont.registerAll()
@@ -43,8 +47,17 @@ struct ClawdBarApp: App {
         if loadedSettings.onboardingDone {
             daemon.start()
         }
+        // Status polling is independent of credentials and of onboarding —
+        // the page is public, so it can start right away and give a fresh
+        // install something true to show on first open.
+        let statusMonitor = StatusMonitor()
+        if loadedSettings.serviceStatusEnabled {
+            statusMonitor.start()
+        }
+
         _settings = State(initialValue: loadedSettings)
         _daemon = State(initialValue: daemon)
+        _status = State(initialValue: statusMonitor)
         _onboarding = State(initialValue: OnboardingWindowController(settings: loadedSettings, daemon: daemon))
     }
 
@@ -52,6 +65,7 @@ struct ClawdBarApp: App {
         MenuBarExtra {
             PopoverView(
                 daemon: daemon,
+                status: status,
                 onToggleFloating: toggleOverlay
             )
             .onAppear {
@@ -78,6 +92,7 @@ struct ClawdBarApp: App {
                 settings: settings,
                 notifications: notifications,
                 daemon: daemon,
+                status: status,
                 onResetOverlaySize: { overlay?.resetSize() }
             )
             .onChange(of: settings.pollInterval) { _, newValue in
@@ -94,6 +109,14 @@ struct ClawdBarApp: App {
             .onChange(of: settings.overlayLocked) { _, newValue in
                 overlay?.setResizable(!newValue)
             }
+            .onChange(of: settings.serviceStatusEnabled) { _, newValue in
+                if newValue {
+                    status.start()
+                    Task { await status.refreshNow() }
+                } else {
+                    status.stop()
+                }
+            }
         }
         // Pin the Preferences window so it doesn't auto-resize while a slider
         // is being dragged. Auto-resize is what made the tab-bar icons
@@ -105,7 +128,7 @@ struct ClawdBarApp: App {
 
     private func toggleOverlay() {
         if overlay == nil {
-            overlay = OverlayWindowController(daemon: daemon)
+            overlay = OverlayWindowController(daemon: daemon, status: status)
         }
         // Re-sync from AppSettings every time we show, so the Preferences
         // slider stays the source of truth — even if the user adjusted it

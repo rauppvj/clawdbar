@@ -3,6 +3,7 @@ import AppKit
 
 struct PopoverView: View {
     @Bindable var daemon: UsageDaemon
+    @Bindable var status: StatusMonitor
     var onToggleFloating: () -> Void = {}
 
     @Environment(\.openSettings) private var openSettings
@@ -40,6 +41,14 @@ struct PopoverView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 10)
 
+            if status.isPolling {
+                Divider().overlay(Theme.stroke)
+
+                ServiceStatusView(monitor: status)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+            }
+
             Divider().overlay(Theme.stroke)
 
             actionRow
@@ -51,6 +60,12 @@ struct PopoverView: View {
         .colorScheme(.dark)
         .onReceive(Timer.publish(every: 0.6, on: .main, in: .common).autoconnect()) { _ in
             moodPhase = (moodPhase + 1) % 4
+        }
+        // Opening the menu bar is the moment the answer matters most, so top
+        // the snapshot up — `refreshIfStale` coalesces repeated opens.
+        .onAppear {
+            guard status.isPolling else { return }
+            Task { await status.refreshIfStale() }
         }
     }
 
@@ -69,6 +84,7 @@ struct PopoverView: View {
                     .background(Theme.accentWarm.opacity(0.15))
                     .foregroundStyle(Theme.accentWarm)
                     .clipShape(Capsule())
+                    .help(PlanBadge.help)
             }
             if let binding = bindingLabel {
                 Text(binding)
@@ -94,22 +110,13 @@ struct PopoverView: View {
             .shadow(color: Theme.color(for: severity).opacity(0.7), radius: 3)
     }
 
-    /// User-friendly plan name pulled from the OAuth token's subscriptionType.
-    /// Works for every Claude Code plan because the token carries this field
-    /// (today seen: "pro", "max"). Falls back to nil if absent.
+    /// User-friendly plan name pulled from the OAuth token's claims.
+    /// See `PlanBadge` for why this can lag a plan change.
     private var planLabel: String? {
-        guard let sub = daemon.subscriptionType, !sub.isEmpty else { return nil }
-        switch sub.lowercased() {
-        case "max":
-            // Disambiguate Max 5× / Max 20× via the opaque tier id, if present.
-            if let tier = daemon.rateLimitTier?.lowercased(), tier.contains("20x") {
-                return "MAX 20×"
-            }
-            return "MAX"
-        case "pro":   return "PRO"
-        case "team":  return "TEAM"
-        default:      return sub.uppercased()
-        }
+        PlanBadge.label(
+            subscriptionType: daemon.subscriptionType,
+            rateLimitTier: daemon.rateLimitTier
+        )
     }
 
     /// Which window is currently the binding constraint — sent by the API
@@ -155,6 +162,9 @@ struct PopoverView: View {
         HStack(spacing: 4) {
             iconButton("arrow.clockwise", help: "Refresh (⌘R)") {
                 Task { await daemon.refreshNow() }
+                if status.isPolling {
+                    Task { await status.refreshNow() }
+                }
             }
             .keyboardShortcut("r")
             .disabled(daemon.isFetching)
