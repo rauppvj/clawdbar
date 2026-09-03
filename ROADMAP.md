@@ -5,6 +5,21 @@ where the project is headed.
 
 ## Recently shipped
 
+### Service status — landed 2026-09-03
+
+ClawdBar now mirrors [status.claude.com](https://status.claude.com): the overall
+indicator, a dot per component, and any unresolved incident. It shows up as a
+section in the popover and as a fifth page on the floating overlay, and both
+open the full page on click.
+
+It polls the public `api/v2/summary.json` every 2 minutes on its own cadence —
+unauthenticated, no usage data, no tokens spent — so a failing request can be
+told apart from your own rate limit. **Preferences → Data Source → Service
+status** turns it off, and off means zero traffic to that host.
+
+Still open here: turning a status change into a notification, which is the
+obvious next step now that the monitor knows when the worst level moves.
+
 ### Windows port — landed 2026-08-26
 
 ClawdBar now runs on Windows. The port lives in [`windows/`](./windows) and was
