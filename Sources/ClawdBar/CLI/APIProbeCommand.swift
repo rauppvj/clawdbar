@@ -28,20 +28,7 @@ enum APIProbeCommand {
         print("Endpoint           : \(client.configuration.baseURL.appendingPathComponent("v1/messages"))")
         print("")
 
-        let semaphore = DispatchSemaphore(value: 0)
-        var outcome: Result<UsageData, Error>!
-        Task {
-            do {
-                let usage = try await client.fetchUsage(using: credentials)
-                outcome = .success(usage)
-            } catch {
-                outcome = .failure(error)
-            }
-            semaphore.signal()
-        }
-        semaphore.wait()
-
-        switch outcome! {
+        switch runBlocking({ try await client.fetchUsage(using: credentials) }) {
         case .success(let usage):
             print("Result: OK")
             print("Session (5h) : \(usage.displaySessionPercent.map { "\($0)%" } ?? "?")  resets \(usage.sessionResetAt.map(formatReset) ?? "?")")
