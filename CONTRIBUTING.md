@@ -4,7 +4,24 @@ Thanks for the interest. ClawdBar is a small, focused tool — contributions tha
 keep it small and focused are very welcome. Larger changes work better as a
 discussion in an issue first.
 
-## Local dev
+## Two platforms, two trees
+
+ClawdBar ships for macOS and Windows as **two independent implementations** that
+share a design, the rate-limit model, and the on-disk history format — nothing
+else. Neither builds on the other's platform, so pick the tree that matches what
+you are changing:
+
+| | macOS | Windows |
+|---|---|---|
+| Where | `Sources/`, `Package.swift` | `windows/` |
+| Stack | Swift + SwiftUI | C# + WinForms/GDI+ |
+| Build | `swift build` | `cd windows && build.cmd` |
+
+A change to shared behaviour — a new threshold, a different mood rule, a history
+field — should land in both, or in one with an issue opened for the other. Say
+which in your PR.
+
+## Local dev — macOS
 
 ```bash
 swift build               # debug build
@@ -17,6 +34,22 @@ swift run ClawdBar --probe-api
 Or open `Package.swift` directly in Xcode for full IDE workflow (build, run,
 Instruments, etc.).
 
+## Local dev — Windows
+
+No SDK, no NuGet, no Visual Studio: it compiles with the C# compiler that
+already ships inside Windows (.NET Framework 4.x).
+
+```cmd
+cd windows
+build.cmd                             :: → dist\ClawdBar.exe
+build-preview.cmd                     :: dev harness, renders forms without the tray
+dist\ClawdBar.exe --probe-credentials
+dist\ClawdBar.exe --probe-api
+```
+
+See [windows/README.md](./windows/README.md) for the platform differences and
+the reasoning behind each.
+
 ## Code style
 
 - **No third-party dependencies** unless there's a specific reason a built-in
@@ -26,9 +59,13 @@ Instruments, etc.).
   with no SwiftUI imports.
 - **Tests for parsers and state machines.** UI tests are out of scope for now.
 - **Strict concurrency.** Swift 6 mode is on. Treat warnings as errors before
-  opening a PR.
+  opening a PR. Note that CI runs on whatever Xcode is latest on the runner,
+  which can be ahead of your local toolchain — a diagnostic that is a warning
+  (or absent) locally may be a hard error there. If CI fails on something that
+  builds clean for you, check the toolchain versions in the "Show toolchain"
+  step before assuming it is flaky.
 
-## Architecture cheatsheet
+## Architecture cheatsheet — macOS
 
 ```
 UsageDaemon          ← @Observable @MainActor; orchestrates polling
@@ -48,6 +85,23 @@ Views/
   Mascot/            ← procedural pixel mascot (Canvas paths, no PNGs)
 ```
 
+## Architecture cheatsheet — Windows
+
+```
+Program.cs           ← entry point, tray icon, window lifecycle
+UsageDaemon.cs       ← polling loop (mirrors the Swift daemon's model)
+Services.cs          ← credential discovery + API client + header parsing
+Models.cs            ← usage model, severity, mood
+AppSettings.cs       ← %APPDATA%\ClawdBar\settings.json (same key names as
+                       the macOS UserDefaults, so the two are easy to diff)
+Json.cs              ← minimal parser, avoids a package dependency
+TrayIconRenderer.cs  ← the 5 icon styles, re-laid out for a square tray slot
+Mascot.cs            ← pixel capybara (port of MascotView.swift)
+Theme.cs             ← palette + embedded Press Start 2P
+PopupForm / OverlayForm / SettingsForm / OnboardingForm
+tools/Preview.cs     ← dev harness for rendering forms in isolation
+```
+
 ## Things on the wishlist
 
 | Idea | Why | Sketch |
@@ -56,13 +110,12 @@ Views/
 | Anthropic API key support | Today only the Claude Code OAuth path is wired up (Pro / Max / Max 20× / Team). API-direct users (api keys from console.anthropic.com) can't use ClawdBar yet. | Add a second `CredentialSource.apiKey(String)` case; auth via `x-api-key` instead of `Authorization: Bearer`; parse the different header family (`anthropic-ratelimit-requests-*`, `anthropic-ratelimit-tokens-*`, `anthropic-ratelimit-input-tokens-*`, `anthropic-ratelimit-output-tokens-*`); add a settings panel for the key (secure text field, store in Keychain under a ClawdBar-owned item); add a `UsageData.kind` enum so the popover can render either 5h/7d windows OR rolling RPM/TPM gauges. |
 | Final mascot art | Today's procedural pixel mascot (`Views/Mascot/MascotView.swift`, Canvas paths, mood-driven eyes/mouth) is a placeholder while the owner finishes design studies. | Either keep the Canvas approach and rewrite the cell layout, or switch to a sprite-sheet asset rendered into `MascotImage.render(...)`. Preserve the `UsageData.Mood` enum so other features that read it (menu bar icon, status dot, overlay) still work. |
 | Tamagotchi page (4th carousel slide) | Animated mascot doing idle stuff in its own page of the floating overlay — blinking, hopping, snacking, reacting to usage spikes. | Add `Views/Overlay/TamagotchiPage.swift`; use `TimelineView` to drive multi-frame sprite animation; wire as page 3 in `OverlayCarousel`. Coordinate with the mascot redesign so they share assets. |
-| Cross-platform builds — Linux + Windows | macOS-only today. The `Services/` layer is already UI-free; the daemon + parser logic could power non-Apple tray icons. | Extract `Services/` into its own SPM library product. Linux: Swift on Linux + GTK status icon (or AppIndicator), `libsecret`/`gnome-keyring` for credentials. Windows: easiest is to rewrite the daemon in C#/F# and share only the algorithm + header parser. First viable shipment: a CLI that prints utilization, then per-platform tray icons. |
+| Linux build | Windows shipped in 2026-08 as a native C# rewrite in `windows/`; Linux is what's left of the cross-platform goal. The `Services/` layer is already UI-free, so the daemon + parser logic could power a non-Apple tray icon. | Extract `Services/` into its own SPM library product. Swift on Linux + GTK status icon (or AppIndicator), `libsecret`/`gnome-keyring` for credentials. First viable shipment: a CLI that prints utilization, then a tray icon. The Windows port went full native rewrite rather than sharing Swift, and that worked well — sharing only the algorithm + header parser is fine here too. |
 | Multi-provider support (OpenAI Codex, DeepSeek, Cursor, …) | Today the entire auth + parser + UI stack is Anthropic-specific. To track usage from other AI assistants users run in parallel, introduce a provider abstraction. | Define `UsageProvider` protocol (`name`, `icon`, `fetch(credentials:) → [UsageWindow]`). Generalize `UsageData` to `[UsageWindow]` (each window: title, percent, reset, severity). Add a Settings tab to manage providers (toggle which ones to poll). Decide: aggregated single popover showing all providers stacked, vs per-provider tabs. Each new provider needs credential discovery (Keychain item / config file / pasted API key), API client, header parser. **Not a priority** — Anthropic-only v0.1 is intentionally complete on its own. Owner will bump priority later if the user audience expands. |
 | Native Spotify integration | Embed a mini Spotify playback control (current track + play/pause/skip) inside ClawdBar so users don't context-switch between apps to manage music. | Two paths: AppleScript bridge (`tell application "Spotify"`) for local control on macOS, or Spotify Web API for remote control across devices. **Lowest priority** — this is a nice-to-have, not part of the core "usage dashboard" identity. |
 | Sparkline history view | Visual trend of last N hours in the popover. | Append-only JSONL at `~/.clawdbar/history.jsonl`, parse in a `HistoryStore`, draw with SwiftUI Charts. |
 | Multi-account | Some users have a Max plan plus an API console org. | Multi-keychain-item discovery, account picker in settings, separate poll cycles. |
-| Linux daemon | The same `UsageDaemon` could power a tray icon on Linux. | Extract `Services/` into its own SPM library product; build a small CLI consumer; replace Keychain with `libsecret` or a CLI prompt for a token file. |
-| Windows menu-bar port | Same idea via WinUI 3 / system tray. | Port `UsageDaemon` logic to C# / F#; share only the algorithm and the API protocol. |
+| Windows: ship the `.exe` in releases | ✅ The Windows port itself shipped in 2026-08 (`windows/`, C# + WinForms, contributed by [@KewinSantos](https://github.com/KewinSantos)). CI builds `ClawdBar.exe` but only uploads it as a workflow artifact. | Have the release job pull the Windows artifact into the `v*` GitHub release next to the DMG, and document the SmartScreen prompt for the unsigned build. |
 | ESP32 hardware bridge | Forward parsed UsageData to a custom ESP32 desk display over USB-serial / Bluetooth. | Add a `Services/ESP32Bridge.swift` that publishes a compact binary frame format any ESP32 firmware could consume. |
 | Cache Components / Vercel-style PPR | Out of scope — no server. |  |
 

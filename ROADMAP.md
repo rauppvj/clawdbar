@@ -3,20 +3,47 @@
 What's coming next. Tracked here so contributors and curious users can see
 where the project is headed.
 
+## Recently shipped
+
+### Windows port — landed 2026-08-26
+
+ClawdBar now runs on Windows. The port lives in [`windows/`](./windows) and was
+contributed by [@KewinSantos](https://github.com/KewinSantos) in PR #1.
+
+It is a native rewrite in C# on WinForms + GDI+ rather than shared Swift code —
+tray icon, panel, floating overlay, heatmap and tamagotchi, same palette and
+same Press Start 2P typeface. It builds with the C# compiler that already ships
+inside Windows, so there is no SDK or package feed to install:
+
+```cmd
+cd windows
+build.cmd
+```
+
+History at `~/.clawdbar/history.jsonl` uses the identical JSON-Lines format on
+both platforms, so a history file moves between them and streaks survive.
+Platform differences and the reasoning behind each are documented in
+[windows/README.md](./windows/README.md).
+
+Still open on Windows: attaching the built `.exe` to releases (CI produces it as
+a workflow artifact today) and the SmartScreen note for unsigned builds.
+
 ## Medium-term — broadens the product
 
-### Cross-platform builds — Linux + Windows
+### Linux build
 
-Today everything is Apple-framework based. The `Services/` layer is already
-SwiftUI-free, so extracting it as a separate SPM library product to power
-non-Apple tray icons is feasible.
+With Windows shipped, Linux is what remains of the cross-platform goal. The
+`Services/` layer is already SwiftUI-free, so extracting it as a separate SPM
+library product to power a non-Apple tray icon is feasible: Swift on Linux + a
+GTK status icon (or AppIndicator), replacing Keychain with `libsecret` /
+`gnome-keyring` or a token file.
 
-- **Linux**: Swift on Linux + GTK status icon (or AppIndicator). Replace
-  Keychain with `libsecret` / `gnome-keyring` lookup or a token file.
-- **Windows**: Swift on Windows is still rough — likely easier to rewrite
-  the daemon in C# / F#, sharing only the algorithm + header parser.
-- **Minimum viable path**: ship a CLI that prints utilization numbers first
-  (Linux daemons can consume that), then add a tray icon per platform.
+**Minimum viable path**: ship a CLI that prints utilization numbers first —
+Linux daemons can consume that — then add a tray icon.
+
+Worth noting: the Windows port chose a full native rewrite over sharing Swift
+code, and that worked out well. Sharing only the algorithm and the rate-limit
+header parser is a legitimate strategy here too.
 
 ### DANCE manual state + accessories for the mascot
 
@@ -63,9 +90,10 @@ nice-to-have, not part of the core usage-dashboard identity.
   (Pro / Max / Team). Anthropic API keys from console.anthropic.com use a
   different auth scheme (`x-api-key`) and a different rate-limit header
   family — needs its own adapter.
-- **Signing.** Builds are ad-hoc signed; first launch needs right-click →
-  Open. Apple Developer ID + notarization will land when the project
-  graduates from dev preview.
+- **Signing.** macOS builds are ad-hoc signed; first launch needs right-click
+  → Open. Apple Developer ID + notarization will land when the project
+  graduates from dev preview. The Windows `.exe` is unsigned too, so
+  SmartScreen shows a warning — "More info" → "Run anyway".
 
 ---
 
