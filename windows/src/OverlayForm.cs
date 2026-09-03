@@ -17,6 +17,7 @@ namespace ClawdBar
         private const int GripSize = 16;
 
         private readonly UsageDaemon _daemon;
+        private readonly StatusMonitor _status;
         private readonly AppSettings _settings;
         private readonly Timer _animation;
 
@@ -27,9 +28,10 @@ namespace ClawdBar
 
         private readonly List<HitButton> _hits = new List<HitButton>();
 
-        public OverlayForm(UsageDaemon daemon, AppSettings settings)
+        public OverlayForm(UsageDaemon daemon, StatusMonitor status, AppSettings settings)
         {
             _daemon = daemon;
+            _status = status;
             _settings = settings;
 
             FormBorderStyle = FormBorderStyle.None;
@@ -52,6 +54,7 @@ namespace ClawdBar
             _animation.Tick += delegate { Invalidate(); };
 
             _daemon.Changed += OnDaemonChanged;
+            if (_status != null) _status.Changed += OnStatusChanged;
         }
 
         private void OnDaemonChanged(object sender, EventArgs e)
@@ -59,6 +62,22 @@ namespace ClawdBar
             if (IsDisposed || !Visible) return;
             _statsComputedAt = DateTime.MinValue;
             Invalidate();
+        }
+
+        private void OnStatusChanged(object sender, EventArgs e)
+        {
+            if (IsDisposed || !Visible) return;
+            // The status page drops out of the pager with its setting rather
+            // than sitting there as a dead slot.
+            if (_page >= PageCount) _page = Math.Max(0, PageCount - 1);
+            Invalidate();
+        }
+
+        /// Four fixed pages plus the service-status page when that feature is
+        /// on.
+        private int PageCount
+        {
+            get { return _status != null && _settings.ServiceStatusEnabled ? 5 : 4; }
         }
 
         // ------------------------------------------------------------ window
@@ -107,6 +126,14 @@ namespace ClawdBar
             SaveFrame();
         }
 
+        /// Opens the carousel on a given page. Used by the preview harness to
+        /// screenshot one page for the docs; the app itself pages by clicking.
+        public void ShowPage(int index)
+        {
+            _page = Math.Max(0, Math.Min(PageCount - 1, index));
+            Invalidate();
+        }
+
         public void ResetSize()
         {
             Size = new Size(Defaults.OverlaySize, Defaults.OverlaySize);
@@ -133,18 +160,20 @@ namespace ClawdBar
             ApplyClickThrough(_settings.OverlayClickThrough);
         }
 
-        public void ToggleVisible()
+        public async void ToggleVisible()
         {
             if (Visible)
             {
                 Hide();
+                return;
             }
-            else
-            {
-                ApplySettings();
-                Show();
-                UpdateRegion();
-            }
+
+            ApplySettings();
+            Show();
+            UpdateRegion();
+            // A widget that just appeared should not be showing a ten-minute-old
+            // status; RefreshIfStale coalesces repeated toggles.
+            if (_status != null && _status.IsPolling) await _status.RefreshIfStaleAsync(60);
         }
 
         protected override void OnVisibleChanged(EventArgs e)
@@ -373,11 +402,14 @@ namespace ClawdBar
 
             _hits.Clear();
 
+            if (_page >= PageCount) _page = Math.Max(0, PageCount - 1);
+
             switch (_page)
             {
                 case 1: PaintHeatmap(g, bounds); break;
                 case 2: PaintStats(g, bounds); break;
                 case 3: PaintTamagotchi(g, bounds); break;
+                case 4: PaintServiceStatus(g, bounds); break;
                 default: PaintCurrent(g, bounds); break;
             }
 
@@ -617,6 +649,142 @@ namespace ClawdBar
             Draw.String(g, mood, small, Theme.ColorFor(usage.SessionSeverity), bounds.Width - 14 - moodWidth, 12);
         }
 
+        /// 5th carousel page: status.claude.com condensed to a watch face. One
+        /// dot per component, incident headline underneath.
+        private void PaintServiceStatus(Graphics g, RectangleF bounds)
+        {
+            const float pad = 14;
+            const float rowHeight = 13;
+
+            Draw.TrackedString(g, "STATUS", Theme.Retro(11), Theme.TextPrimary, pad, 12, 2.5f);
+
+            float y = 40;
+            Font small = Theme.Retro(8);
+            Font tiny = Theme.Retro(7);
+            float width = bounds.Width - pad * 2;
+
+            ServiceStatus snapshot = _status == null ? null : _status.Status;
+            if (snapshot == null)
+            {
+                string caption = _status != null && _status.LastError != null ? "STATUS" : "CHECKING...";
+                Draw.String(g, caption, small, Theme.TextMuted, pad, y);
+                if (_status != null && _status.LastError != null)
+                {
+                    Draw.String(g, "UNAVAILABLE", small, Theme.TextMuted, pad, y + 12);
+                }
+                PaintStatusFooter(g, bounds, tiny);
+                return;
+            }
+
+            // Headline: the page's own wording, coloured by the worst level.
+            ServiceLevel worst = snapshot.WorstLevel;
+            using (var brush = new SolidBrush(Theme.ColorFor(worst)))
+            {
+                g.FillEllipse(brush, pad, y + 2, 6, 6);
+            }
+            Draw.String(g, FitText(g, snapshot.Headline, small, width - 12), small,
+                Theme.ColorFor(worst), pad + 12, y);
+            y += 16;
+
+            // How many component rows fit once the title, headline, incident
+            // line and pager have taken their cut. Keeps the page honest at
+            // 140 px as well as at 320 px.
+            int budget = Math.Max(2, (int)((bounds.Height - 100) / rowHeight));
+            List<ServiceComponent> visible = VisibleComponents(snapshot, budget);
+
+            for (int i = 0; i < visible.Count; i++)
+            {
+                ServiceComponent component = visible[i];
+                float rowY = y + i * rowHeight;
+                using (var brush = new SolidBrush(Theme.ColorFor(component.Level)))
+                {
+                    g.FillEllipse(brush, pad + 1, rowY + 3, 4, 4);
+                }
+
+                float available = width - 10;
+                if (!component.IsHealthy)
+                {
+                    string badge = ServiceLevels.Badge(component.Level);
+                    float badgeWidth = Draw.Measure(g, badge, tiny).Width;
+                    Draw.String(g, badge, tiny, Theme.ColorFor(component.Level), pad + width - badgeWidth, rowY);
+                    available -= badgeWidth + 4;
+                }
+                Draw.String(g, FitText(g, component.ShortName, tiny, available), tiny,
+                    component.IsHealthy ? Theme.TextSecondary : Theme.TextPrimary, pad + 10, rowY);
+            }
+            y += visible.Count * rowHeight;
+
+            if (visible.Count < snapshot.Components.Count)
+            {
+                string more = "+" + (snapshot.Components.Count - visible.Count).ToString(CultureInfo.InvariantCulture) + " MORE";
+                Draw.String(g, more, tiny, Theme.TextMuted, pad, y);
+                y += rowHeight;
+            }
+
+            if (snapshot.Incidents.Count > 0)
+            {
+                ServiceIncident incident = snapshot.Incidents[0];
+                Draw.String(g, FitText(g, "! " + incident.Name, tiny, width), tiny,
+                    Theme.ColorFor(incident.Impact), pad, y + 2);
+            }
+
+            PaintStatusFooter(g, bounds, tiny);
+        }
+
+        /// The overlay is a widget, not a browser — the footer is the one click
+        /// that leads to the full incident timeline.
+        private void PaintStatusFooter(Graphics g, RectangleF bounds, Font font)
+        {
+            const float pad = 14;
+            float y = bounds.Height - 46;
+
+            var link = new HitButton(null, "Open status.claude.com",
+                delegate { PopupForm.OpenInBrowser(ServiceStatus.PageUrl); });
+            link.Bounds = new RectangleF(pad - 2, y - 2, bounds.Width - pad * 2, 14);
+            _hits.Add(link);
+            Draw.String(g, "status.claude.com", font, Theme.TextMuted, pad, y);
+
+            if (_status == null) return;
+            string tag = null;
+            if (_status.IsFetching) tag = "...";
+            else if (_status.LastError != null && _status.Status != null) tag = "STALE";
+            if (tag == null) return;
+
+            float width = Draw.Measure(g, tag, font).Width;
+            Draw.String(g, tag, font, Theme.TextMuted, bounds.Width - pad - width, y);
+        }
+
+        /// When the list has to be cut, whatever is broken goes first — that is
+        /// the reason anyone flips to this page.
+        private static List<ServiceComponent> VisibleComponents(ServiceStatus snapshot, int limit)
+        {
+            if (snapshot.Components.Count <= limit) return snapshot.Components;
+
+            var ordered = new List<ServiceComponent>();
+            for (int i = 0; i < snapshot.Components.Count; i++)
+            {
+                if (!snapshot.Components[i].IsHealthy) ordered.Add(snapshot.Components[i]);
+            }
+            for (int i = 0; i < snapshot.Components.Count && ordered.Count < limit; i++)
+            {
+                if (snapshot.Components[i].IsHealthy) ordered.Add(snapshot.Components[i]);
+            }
+            if (ordered.Count > limit) ordered.RemoveRange(limit, ordered.Count - limit);
+            return ordered;
+        }
+
+        private static string FitText(Graphics g, string text, Font font, float maxWidth)
+        {
+            if (string.IsNullOrEmpty(text)) return "";
+            if (Draw.Measure(g, text, font).Width <= maxWidth) return text;
+            string trimmed = text;
+            while (trimmed.Length > 1 && Draw.Measure(g, trimmed + "..", font).Width > maxWidth)
+            {
+                trimmed = trimmed.Substring(0, trimmed.Length - 1);
+            }
+            return trimmed + "..";
+        }
+
         /// Two stacked pixel rows marching out of phase, so the surface reads
         /// as one wave instead of two stripes.
         private void PaintWave(Graphics g, float x, float y, float width, double t)
@@ -641,7 +809,7 @@ namespace ClawdBar
 
         private void PaintPager(Graphics g, RectangleF bounds)
         {
-            const int count = 4;
+            int count = PageCount;
             float dotSpacing = 11;
             float centerY = bounds.Height - 18;
             float dotsWidth = dotSpacing * (count - 1);
@@ -741,6 +909,7 @@ namespace ClawdBar
             if (disposing)
             {
                 _daemon.Changed -= OnDaemonChanged;
+                if (_status != null) _status.Changed -= OnStatusChanged;
                 if (_animation != null) _animation.Dispose();
             }
             base.Dispose(disposing);

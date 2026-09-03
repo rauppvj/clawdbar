@@ -14,6 +14,7 @@ namespace ClawdBar
     {
         private readonly AppSettings _settings;
         private readonly UsageDaemon _daemon;
+        private readonly StatusMonitor _status;
         private readonly Action _onSettingsChanged;
         private readonly Action _onResetOverlaySize;
 
@@ -23,12 +24,15 @@ namespace ClawdBar
 
         private Label _testResult;
         private Button _testButton;
+        private Label _statusSummary;
+        private Button _statusButton;
 
-        public SettingsForm(AppSettings settings, UsageDaemon daemon,
+        public SettingsForm(AppSettings settings, UsageDaemon daemon, StatusMonitor status,
             Action onSettingsChanged, Action onResetOverlaySize)
         {
             _settings = settings;
             _daemon = daemon;
+            _status = status;
             _onSettingsChanged = onSettingsChanged;
             _onResetOverlaySize = onResetOverlaySize;
 
@@ -88,12 +92,26 @@ namespace ClawdBar
             }
             Windowing.CenterOnPrimary(this);
             SelectPage(0);
+
+            if (_status != null) _status.Changed += OnStatusChanged;
+        }
+
+        private void OnStatusChanged(object sender, EventArgs e)
+        {
+            if (IsDisposed) return;
+            UpdateStatusSummary();
         }
 
         protected override void OnShown(EventArgs e)
         {
             base.OnShown(e);
             Windowing.BringToFront(this);
+        }
+
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            if (_status != null) _status.Changed -= OnStatusChanged;
+            base.OnFormClosed(e);
         }
 
         private void SelectPage(int index)
@@ -285,6 +303,29 @@ namespace ClawdBar
 
             _testResult = layout.Caption("");
 
+            layout.Header("Service status");
+            layout.CheckRow("Show Claude service status", _settings.ServiceStatusEnabled,
+                delegate(bool value)
+                {
+                    _settings.ServiceStatusEnabled = value;
+                    _settings.Save();
+                    if (_onSettingsChanged != null) _onSettingsChanged();
+                    UpdateStatusSummary();
+                    return value;
+                });
+            layout.Caption("Polls the public status page at status.claude.com every 2 minutes, so a red " +
+                           "usage number can be told apart from an Anthropic incident. Read-only and " +
+                           "unauthenticated - no token and no usage data are sent to that host.");
+
+            _statusButton = layout.ButtonRow("Check now", null);
+            _statusButton.Click += OnCheckStatus;
+
+            Button openStatusPage = layout.ButtonRow("Open status.claude.com", null);
+            openStatusPage.Click += delegate { PopupForm.OpenInBrowser(ServiceStatus.PageUrl); };
+
+            _statusSummary = layout.Caption("");
+            UpdateStatusSummary();
+
             layout.Header("Advanced");
             layout.TextRow("API base URL", _settings.ApiBaseUrl,
                 delegate(string value) { _settings.ApiBaseUrl = value; _settings.Save(); });
@@ -328,6 +369,54 @@ namespace ClawdBar
         private static string Percent(int? value)
         {
             return value.HasValue ? value.Value.ToString(CultureInfo.InvariantCulture) + "%" : "-";
+        }
+
+        private async void OnCheckStatus(object sender, EventArgs e)
+        {
+            if (_status == null) return;
+            _statusButton.Enabled = false;
+            _statusSummary.Text = "Checking...";
+            try
+            {
+                await _status.RefreshNowAsync();
+            }
+            finally
+            {
+                _statusButton.Enabled = true;
+                UpdateStatusSummary();
+            }
+        }
+
+        private void UpdateStatusSummary()
+        {
+            if (_statusSummary == null || _statusSummary.IsDisposed) return;
+            _statusSummary.Text = StatusSummary();
+        }
+
+        private string StatusSummary()
+        {
+            if (_status == null) return "Not polling.";
+            if (!_settings.ServiceStatusEnabled)
+                return "Off - ClawdBar sends no requests to status.claude.com.";
+
+            ServiceStatus snapshot = _status.Status;
+            if (snapshot != null)
+            {
+                var builder = new System.Text.StringBuilder();
+                builder.Append(CultureInfo.InvariantCulture.TextInfo.ToTitleCase(snapshot.Headline.ToLowerInvariant()));
+
+                List<ServiceComponent> degraded = snapshot.DegradedComponents;
+                for (int i = 0; i < degraded.Count; i++)
+                {
+                    builder.Append(i == 0 ? " - " : ", ");
+                    builder.Append(degraded[i].ShortName).Append(' ').Append(ServiceLevels.Badge(degraded[i].Level));
+                }
+                if (_status.LastError != null) builder.Append(" (last refresh failed)");
+                return builder.ToString();
+            }
+
+            if (_status.LastError != null) return "Unavailable: " + _status.LastError;
+            return _status.IsPolling ? "Checking..." : "Not polling.";
         }
 
         private Panel BuildAboutPage()

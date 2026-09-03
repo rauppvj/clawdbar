@@ -11,8 +11,8 @@ package and the macOS CI workflow is untouched.
 
 ClawdBar polls Anthropic's Messages API with a 1-token Haiku ping, parses the
 `anthropic-ratelimit-unified-*` headers, and surfaces your **5 h session** and **7 d weekly**
-utilization in the tray — plus a floating overlay, threshold notifications, and a 7-day
-activity heatmap.
+utilization in the tray — plus a floating overlay, threshold notifications, a 7-day
+activity heatmap, and the live status of Anthropic's own services.
 
 | | |
 |---|---|
@@ -77,24 +77,42 @@ scheme (`x-api-key`) and a different rate-limit header family.
 - **Tray icon**, five styles: Numeric, Mini Bar, Mascot, Dual Bar, Hybrid
 - **Panel** on left-click — both windows, reset countdowns, plan badge, which window is
   currently binding, refresh / overlay / preferences / quit
-- **Floating widget** with four pages you page through with the chevrons:
-  current usage, activity heatmap, stats, and the tamagotchi where the capybara slowly
-  drowns as you burn through your window
+- **Service status** from status.claude.com in the panel and on its own overlay page, so a
+  red number can be told apart from an Anthropic incident
+- **Floating widget** with five pages you page through with the chevrons:
+  current usage, activity heatmap, stats, the tamagotchi where the capybara slowly
+  drowns as you burn through your window, and service status
 - **Preferences**: poll interval, launch at login, icon style, overlay opacity /
   click-through / snap corner / size lock, notification thresholds, API host and model
 - **Threshold alerts** as tray notifications, with separate latches for 5 h and 7 d
 - **Local history** at `%USERPROFILE%\.clawdbar\history.jsonl`, same JSON-Lines format as
   the macOS build — copy one across and your streaks come with it
 
-| | | |
-|---|---|---|
-| ![Heatmap](docs/overlay-heatmap.png) | ![Stats](docs/overlay-stats.png) | ![Tamagotchi](docs/overlay-tamagotchi.png) |
+| | | | |
+|---|---|---|---|
+| ![Heatmap](docs/overlay-heatmap.png) | ![Stats](docs/overlay-stats.png) | ![Tamagotchi](docs/overlay-tamagotchi.png) | ![Service status](docs/overlay-status.png) |
+
+### Service status
+
+A 429 in ClawdBar looks the same whether you burned through your own window or Anthropic is
+having a bad afternoon. ClawdBar reads the public
+[status.claude.com](https://status.claude.com) feed every two minutes — one unauthenticated
+GET of `api/v2/summary.json`, the same document the website renders — and shows the page
+indicator, a dot per component and any unresolved incident in the panel and on the
+overlay's fifth page. Clicking the arrow, an incident, or the overlay footer opens the page
+itself.
+
+No token and no usage data are sent to that host, and the snapshot survives a failed
+refresh with a `STALE` tag rather than blanking. Turn the whole thing off in
+**Preferences → Data Source → Service status**; off means zero requests to that host and no
+status surfaces anywhere.
 
 ## CLI probes
 
 ```cmd
 ClawdBar.exe --probe-credentials   :: inspect stored credentials (shape only, never the token)
 ClawdBar.exe --probe-api           :: spend 1 Haiku token, dump every anthropic-* header
+ClawdBar.exe --probe-status        :: fetch status.claude.com (no credentials, no tokens)
 ClawdBar.exe --reset-onboarding    :: delete the settings file
 ClawdBar.exe --help
 ```
@@ -128,6 +146,8 @@ Two things were fixed rather than carried over:
 ## Privacy
 
 - The OAuth token is read locally and only ever sent to the configured API host.
+- The status-page request is a plain unauthenticated GET: no token, no usage data, no
+  identifiers. Switch it off in Preferences and the host is never contacted.
 - No telemetry, no analytics, no crash reporting.
 - Usage history stays on disk at `%USERPROFILE%\.clawdbar\history.jsonl`.
 - `--probe-credentials` prints token **length and an 8-character prefix**, never the token.
@@ -151,15 +171,17 @@ The last line is only needed if you enabled "Launch at login".
 ```
 src\          the app (one namespace, no project file)
   Json.cs             hand-rolled JSON reader/writer — no package feed to pull from
-  Models.cs           UsageData, Credentials, samples, derived stats
+  Models.cs           UsageData, Credentials, samples, derived stats, plan badge
   AppSettings.cs      JSON-backed preferences
   Services.cs         credential store, API client, history, login item, notifications
   UsageDaemon.cs      poll loop, credential cache, sleep/wake
+  ServiceStatus.cs    status.claude.com snapshot: levels, components, incidents
+  StatusMonitor.cs    status-page client and its own slow poll loop
   Theme.cs            palette, embedded font, shared GDI+ drawing
   Mascot.cs           the 16x16 procedural capybara
   TrayIconRenderer.cs tray bitmaps for the five styles
   PopupForm.cs        the tray panel
-  OverlayForm.cs      the floating widget and its four pages
+  OverlayForm.cs      the floating widget and its five pages
   SettingsForm.cs     preferences
   OnboardingForm.cs   first run
   Program.cs          entry point, CLI probes, tray context
@@ -173,7 +195,7 @@ build-preview.cmd     builds the dev harness
 
 ```cmd
 build-preview.cmd
-dist\Preview.exe popup       :: or: settings, onboarding
+dist\Preview.exe popup       :: or: settings, onboarding, overlay [page]
 ```
 
 Opens a single window against live data, without going through the tray. Quit ClawdBar

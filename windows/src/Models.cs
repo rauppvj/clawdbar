@@ -64,6 +64,62 @@ namespace ClawdBar
         }
     }
 
+    /// Turns the two plan-ish claims carried by the Claude Code OAuth token
+    /// into the pill shown in the tray panel's header.
+    ///
+    /// Both claims are minted by Anthropic's auth server and only change when
+    /// the token itself is re-issued — a plan upgrade does *not* rewrite the
+    /// stored token, so the pill can legitimately lag until the user re-runs
+    /// `claude /login`. Nothing here can fix that; the job is only to read what
+    /// is there without being fussy about its exact spelling.
+    internal static class PlanBadge
+    {
+        /// subscriptionType is `claudeAiOauth.subscriptionType` — seen as
+        /// "pro", "max", and (on some accounts) "max_5x" / "max_20x".
+        /// rateLimitTier is `claudeAiOauth.rateLimitTier`, an opaque id such as
+        /// "default_claude_ai" or "default_claude_max_20x"; it carries the
+        /// multiplier when subscriptionType doesn't. Returns null when there is
+        /// nothing to show.
+        public static string Label(string subscriptionType, string rateLimitTier)
+        {
+            string raw = subscriptionType == null ? "" : subscriptionType.Trim();
+            if (raw.Length == 0) return null;
+
+            string sub = raw.ToLowerInvariant();
+            string tier = (rateLimitTier == null ? "" : rateLimitTier).ToLowerInvariant();
+
+            // The multiplier can arrive on either claim, so check both before
+            // falling back to a bare "MAX".
+            if (sub.StartsWith("max", StringComparison.Ordinal) ||
+                tier.IndexOf("_max", StringComparison.Ordinal) >= 0)
+            {
+                if (sub.IndexOf("20x", StringComparison.Ordinal) >= 0 ||
+                    tier.IndexOf("20x", StringComparison.Ordinal) >= 0) return "MAX 20X";
+                if (sub.IndexOf("5x", StringComparison.Ordinal) >= 0 ||
+                    tier.IndexOf("5x", StringComparison.Ordinal) >= 0) return "MAX 5X";
+                return "MAX";
+            }
+
+            switch (sub)
+            {
+                case "pro": return "PRO";
+                case "team": return "TEAM";
+                case "enterprise": return "ENTERPRISE";
+                case "free": return "FREE";
+                // An unknown plan name is still better shown than swallowed.
+                default: return raw.ToUpperInvariant();
+            }
+        }
+
+        /// Tooltip for the pill. The label is read from the token, so when it
+        /// disagrees with reality the fix is a re-login, not a ClawdBar setting
+        /// — say so where the user is already looking.
+        public const string Help =
+            "Plan as claimed by your Claude Code OAuth token. It only changes when the token is " +
+            "re-issued - after changing plans, run `claude /login` in a terminal, then hit " +
+            "\"Re-read credentials\" in Preferences > Data Source.";
+    }
+
     internal static class Clock
     {
         private static readonly DateTime Epoch = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
