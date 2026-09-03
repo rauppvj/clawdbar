@@ -132,11 +132,17 @@ final class UsageDaemon {
         }
     }
 
-    /// Reads the keychain at most once per token-lifetime. If the cached
-    /// credential is within 60s of its `expiresAt` we re-read so the next
-    /// request gets a fresh token before the API rejects it.
+    /// Reads the keychain at most once per app launch. We deliberately do
+    /// NOT re-read near `expiresAt`: the macOS keychain ACL has an integrity
+    /// entry bound to the item's data hash, and Claude Code rewrites the
+    /// item every time it refreshes the OAuth token (~every 5 h). The rewrite
+    /// changes the data hash, which silently revokes our "Always Allow"
+    /// authorization, so the next `SecItemCopyMatching` becomes a password
+    /// prompt. By holding the in-memory cache until the API actually returns
+    /// 401 (which invalidates the cache via `invalidateCredentials()`), we
+    /// trade a few seconds of stale token for not nagging the user every 5 h.
     private func loadCachedCredentials() throws -> Credentials {
-        if let cached = cachedCredentials, !cached.expiresSoon {
+        if let cached = cachedCredentials {
             return cached
         }
         let fresh = try credentialStore.load()
