@@ -147,8 +147,11 @@ grep -hE "^import " Sources/ClawdBar/**/*.swift | sort -u
 find Sources/ClawdBar/Resources -type f -exec file {} \;
 ```
 
-At time of writing the only remote endpoint is `api.anthropic.com` (configurable
-in Preferences for dev use). The only bundled binary asset is
+At time of writing there are exactly two remote endpoints:
+`api.anthropic.com` (configurable in Preferences for dev use) and
+`status.claude.com/api/v2/summary.json` — the public status page, fetched
+unauthenticated every 2 minutes and disableable in
+**Preferences → Data Source → Service status**. The only bundled binary asset is
 `PressStart2P-Regular.ttf` — pulled from the official
 [github.com/google/fonts](https://github.com/google/fonts/tree/main/ofl/pressstart2p)
 mirror, SIL OFL licensed, digitally signed by the Press Start 2P Project Authors.

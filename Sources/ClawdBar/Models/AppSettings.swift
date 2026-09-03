@@ -21,6 +21,7 @@ enum AppSettingsDefaults {
     static let notifyForWeekly: Bool = true
     static let apiBaseURL: String = "https://api.anthropic.com"
     static let apiModel: String = "claude-haiku-4-5-20251001"
+    static let serviceStatusEnabled: Bool = true
 }
 
 enum MenuBarStyle: String, CaseIterable, Identifiable, Sendable {
@@ -115,6 +116,13 @@ final class AppSettings {
         didSet { defaults.set(apiModel, forKey: Key.apiModel) }
     }
 
+    // MARK: - Service status
+    /// Whether ClawdBar polls status.claude.com. Off means zero requests to
+    /// that host and no status surfaces anywhere in the UI.
+    var serviceStatusEnabled: Bool {
+        didSet { defaults.set(serviceStatusEnabled, forKey: Key.serviceStatusEnabled) }
+    }
+
     // MARK: - Onboarding
     var onboardingDone: Bool {
         didSet { defaults.set(onboardingDone, forKey: Key.onboardingDone) }
@@ -142,6 +150,7 @@ final class AppSettings {
         self.notifyForWeekly = (defaults.object(forKey: Key.notifyForWeekly) as? Bool) ?? AppSettingsDefaults.notifyForWeekly
         self.apiBaseURL = defaults.string(forKey: Key.apiBaseURL) ?? AppSettingsDefaults.apiBaseURL
         self.apiModel = defaults.string(forKey: Key.apiModel) ?? AppSettingsDefaults.apiModel
+        self.serviceStatusEnabled = (defaults.object(forKey: Key.serviceStatusEnabled) as? Bool) ?? AppSettingsDefaults.serviceStatusEnabled
         self.onboardingDone = defaults.bool(forKey: Key.onboardingDone)
     }
 
@@ -163,6 +172,7 @@ final class AppSettings {
         static let notifyForWeekly      = "clawdbar.notifications.weekly"
         static let apiBaseURL           = "clawdbar.api.baseURL"
         static let apiModel             = "clawdbar.api.model"
+        static let serviceStatusEnabled = "clawdbar.serviceStatus.enabled"
         static let onboardingDone       = "clawdbar.onboarding.done"
     }
 }

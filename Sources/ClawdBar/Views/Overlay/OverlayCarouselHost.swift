@@ -2,12 +2,14 @@ import SwiftUI
 
 /// Top-level view hosted inside the floating overlay panel. Wraps the
 /// existing single "current usage" view as page 0 of a carousel, with the
-/// heatmap and stats pages alongside. The dark background + corner radius
-/// + context menu + resize grip used to live on OverlayContentView; we lift
-/// them up here so all pages share the same chrome.
+/// heatmap, stats, tamagotchi and service-status pages alongside. The dark
+/// background + corner radius + context menu + resize grip used to live on
+/// OverlayContentView; we lift them up here so all pages share the same
+/// chrome.
 struct OverlayCarouselHost: View {
     @Bindable var daemon: UsageDaemon
     @Bindable var settings: OverlaySettings
+    @Bindable var status: StatusMonitor
     var isResizable: Bool
     var onHide: () -> Void
     var onSnap: (OverlayContentView.Corner) -> Void
@@ -15,15 +17,11 @@ struct OverlayCarouselHost: View {
     var onResize: (CGSize) -> Void
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Theme.bgDeep)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .strokeBorder(Theme.stroke, lineWidth: 1)
-                )
-
+        OverlayCard {
             OverlayCarousel(
+                // The status page disappears with its setting rather than
+                // sitting there as a dead slot in the pager.
+                pageCount: status.isPolling ? 5 : 4,
                 page0: OverlayContentView(
                     daemon: daemon,
                     settings: settings,
@@ -36,7 +34,8 @@ struct OverlayCarouselHost: View {
                 ),
                 page1: HeatmapPage(stats: UsageStats.compute(from: daemon.history.samples)),
                 page2: StatsPage(stats: UsageStats.compute(from: daemon.history.samples)),
-                page3: TamagotchiPage(daemon: daemon)
+                page3: TamagotchiPage(daemon: daemon),
+                page4: StatusPage(monitor: status)
             )
         }
         .opacity(settings.opacity)

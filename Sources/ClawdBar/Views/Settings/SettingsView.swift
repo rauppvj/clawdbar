@@ -5,6 +5,7 @@ struct SettingsView: View {
     @Bindable var settings: AppSettings
     @Bindable var notifications: NotificationManager
     let daemon: UsageDaemon
+    let status: StatusMonitor
     var onResetOverlaySize: () -> Void = {}
 
     var body: some View {
@@ -13,7 +14,7 @@ struct SettingsView: View {
             appearance: AppearanceTab(settings: settings),
             floating: FloatingTab(settings: settings, onResetSize: onResetOverlaySize),
             notifications: NotificationsTab(settings: settings, notifications: notifications),
-            dataSource: DataSourceTab(settings: settings, daemon: daemon),
+            dataSource: DataSourceTab(settings: settings, daemon: daemon, status: status),
             about: AboutTab()
         )
     }
@@ -241,6 +242,7 @@ private struct NotificationAuthStatus: View {
 private struct DataSourceTab: View {
     @Bindable var settings: AppSettings
     let daemon: UsageDaemon
+    @Bindable var status: StatusMonitor
 
     @State private var testResult: String?
     @State private var isTesting = false
@@ -284,6 +286,35 @@ private struct DataSourceTab: View {
                         .lineLimit(4)
                 }
             }
+            Section("Service status") {
+                ToggleRow(
+                    label: "Show Claude service status",
+                    value: $settings.serviceStatusEnabled,
+                    defaultValue: AppSettingsDefaults.serviceStatusEnabled
+                )
+                Text("Polls the public status page at status.claude.com every 2 minutes so a red usage number can be told apart from an Anthropic incident. Read-only, unauthenticated — no token and no usage data are sent to that host.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if settings.serviceStatusEnabled {
+                    HStack {
+                        Button {
+                            Task { await status.refreshNow() }
+                        } label: {
+                            if status.isFetching {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Text("Check now")
+                            }
+                        }
+                        .disabled(status.isFetching)
+                        Link("Open status.claude.com", destination: ServiceStatus.pageURL)
+                    }
+                    Text(statusSummary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                }
+            }
             Section("Advanced") {
                 HStack {
                     Text("API base URL")
@@ -309,6 +340,20 @@ private struct DataSourceTab: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    private var statusSummary: String {
+        if let snapshot = status.status {
+            let components = snapshot.degradedComponents
+                .map { "\($0.shortName) \($0.level.badge)" }
+                .joined(separator: ", ")
+            let head = snapshot.headline.capitalized
+            let tail = components.isEmpty ? "" : " — \(components)"
+            let error = status.lastError == nil ? "" : " (last refresh failed)"
+            return head + tail + error
+        }
+        if let error = status.lastError { return "Unavailable: \(error)" }
+        return status.isPolling ? "Checking…" : "Not polling."
     }
 
     private var sourceLabel: String {

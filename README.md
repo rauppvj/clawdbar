@@ -4,7 +4,7 @@
 
 [![Sponsor](https://img.shields.io/github/sponsors/rauppvj?label=Sponsor&logo=github&color=ea4aaa)](https://github.com/sponsors/rauppvj) [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-FFDD00?logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/rauppv) [![CI](https://github.com/rauppvj/clawdbar/actions/workflows/ci.yml/badge.svg)](https://github.com/rauppvj/clawdbar/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-ClawdBar polls Anthropic's Messages API once a minute with a 1-token Haiku ping, parses the `anthropic-ratelimit-unified-*` headers, and surfaces your **5 h session** and **7 d weekly** utilization in the menu bar — plus an optional floating overlay, threshold notifications, and a 7-day heatmap.
+ClawdBar polls Anthropic's Messages API once a minute with a 1-token Haiku ping, parses the `anthropic-ratelimit-unified-*` headers, and surfaces your **5 h session** and **7 d weekly** utilization in the menu bar — plus an optional floating overlay, threshold notifications, a 7-day heatmap, and a live mirror of **[status.claude.com](https://status.claude.com)** so a failing request can be told apart from your own rate limit.
 
 ![ClawdBar in action — menu-bar icon (top), popover (top right), floating overlay (bottom left)](docs/assets/hero-screenshot.jpeg)
 
@@ -113,11 +113,25 @@ anthropic-ratelimit-unified-7d-utilization
 anthropic-ratelimit-unified-7d-reset
 ```
 
+### Service status
+
+Separately, every 2 minutes ClawdBar GETs `status.claude.com/api/v2/summary.json`
+— the same public document the status page itself renders — and shows the
+overall indicator, a dot per component (claude.ai, API, Claude Code, Console,
+Cowork, Gov) and any unresolved incident. It appears in the popover and as the
+5th page of the floating overlay; clicking either opens the full page.
+
+That request carries no credentials and no usage data, and it costs no tokens.
+Turn it off in **Preferences → Data Source → Service status** and ClawdBar stops
+talking to that host entirely.
+
 At the default 60-second poll interval, each day costs ≈ 1.4 k Haiku tokens — on the order of **US$ 0.0001/day** against your Anthropic account. Shown in the About tab.
 
 ## Privacy
 
 - The OAuth token is read locally and only ever sent to `api.anthropic.com`.
+- The only other host ClawdBar contacts is `status.claude.com`, for the public
+  status page — unauthenticated, read-only, and switchable off in Preferences.
 - No telemetry, no analytics, no crash reporting.
 - Local usage history lives at `~/.clawdbar/history.jsonl`.
 - iCloud sync of any usage data is explicitly out of scope.
@@ -131,6 +145,7 @@ The same binary exposes non-UI commands for debugging:
 ```bash
 ClawdBar --probe-credentials   # inspect keychain credentials (shape only)
 ClawdBar --probe-api           # spend 1 Haiku token, dump anthropic-* headers
+ClawdBar --probe-status        # dump status.claude.com components + incidents
 ClawdBar --reset-onboarding    # wipe UserDefaults
 ```
 
