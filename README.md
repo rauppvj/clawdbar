@@ -81,6 +81,10 @@ If you enabled **Launch at login**, macOS keeps a service registration that remo
 
 ClawdBar's authorization to read the `Claude Code-credentials` keychain item is stored as a per-app ACL on that item. It's harmless once the app is gone, but if you want it gone too: open **Keychain Access**, search for `Claude Code-credentials`, double-click → **Access Control** tab → select ClawdBar in the always-allow list → **−**.
 
+ClawdBar also keeps its own item holding a copy of the token. Run
+`ClawdBar --forget-credential` before uninstalling, or delete
+`com.vinicius.clawdbar.credentials` in Keychain Access.
+
 ## Requirements
 
 - **macOS 15** (Sequoia) or newer
@@ -127,9 +131,37 @@ talking to that host entirely.
 
 At the default 60-second poll interval, each day costs ≈ 1.4 k Haiku tokens — on the order of **US$ 0.0001/day** against your Anthropic account. Shown in the About tab.
 
+### Why macOS used to keep asking for your password
+
+That item belongs to Claude Code, not to ClawdBar. The CLI rewrites it on every
+OAuth refresh (~every 5 h), and a rewrite by another process invalidates the
+per-app ACL entry that **Always Allow** created — so the next read became a
+password prompt. Nothing an app can do keeps access to an item somebody else
+keeps rewriting.
+
+So ClawdBar reads it as rarely as possible. After a successful read it mirrors
+the token into **a keychain item it owns** (`com.vinicius.clawdbar.credentials`),
+and reads that on subsequent launches — ClawdBar is the only writer, so that
+authorization survives. Preferences → **Data Source → Saved credential** shows
+what is stored and removes it in one click.
+
+The mirror still expires with the token. To stop the prompt for good, give
+ClawdBar a credential of its own:
+
+```bash
+claude setup-token       # long-lived token, requires a Claude subscription
+```
+
+Paste it into **Preferences → Data Source → Use my own token**. While one is
+saved, ClawdBar never touches Claude Code's keychain item at all, so macOS has
+no reason to ask for anything.
+
 ## Privacy
 
 - The OAuth token is read locally and only ever sent to `api.anthropic.com`.
+- The saved copy lives in ClawdBar's own keychain item — encrypted at rest by
+  macOS, gated by an ACL naming ClawdBar, never written to a plain file, never
+  synced. `--forget-credential` (or the Preferences button) deletes it.
 - The only other host ClawdBar contacts is `status.claude.com`, for the public
   status page — unauthenticated, read-only, and switchable off in Preferences.
 - No telemetry, no analytics, no crash reporting.
@@ -147,6 +179,7 @@ ClawdBar --probe-credentials   # inspect keychain credentials (shape only)
 ClawdBar --probe-api           # spend 1 Haiku token, dump anthropic-* headers
 ClawdBar --probe-status        # dump status.claude.com components + incidents
 ClawdBar --reset-onboarding    # wipe UserDefaults
+ClawdBar --forget-credential   # delete ClawdBar's own saved credential
 ```
 
 ## Build from source
