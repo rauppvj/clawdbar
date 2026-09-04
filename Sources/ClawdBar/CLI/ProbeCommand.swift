@@ -11,6 +11,8 @@ enum ProbeCommand {
         print("Keychain account : \(store.configuration.keychainAccount)")
         print("Legacy file path : \(store.configuration.legacyFileURL.path)")
         print("")
+        printSavedCredential()
+        print("")
 
         do {
             let cred = try store.load()
@@ -50,6 +52,29 @@ enum ProbeCommand {
             print("Result: FAILED")
             print("Unexpected error: \(error)")
             return 1
+        }
+    }
+
+    /// Reports ClawdBar's own keychain item — the copy that keeps the app from
+    /// re-reading Claude Code's item (and re-prompting) on every launch.
+    private static func printSavedCredential() {
+        let vault = KeychainTokenVault()
+        print("ClawdBar's own item")
+        print("-------------------")
+        print("Keychain service : \(vault.configuration.service)")
+        do {
+            guard let saved = try vault.load() else {
+                print("Saved            : nothing yet")
+                return
+            }
+            let fmt = ISO8601DateFormatter()
+            print("Saved            : yes (\(saved.origin.rawValue))")
+            print("accessToken      : present (\(saved.accessToken.count) chars)")
+            print("savedAt          : \(fmt.string(from: saved.savedAt))")
+            print("expiresAt        : \(saved.expiresAt.map { fmt.string(from: $0) } ?? "none")")
+            print("usable now       : \(saved.isExpired() ? "no — expired" : "yes")")
+        } catch {
+            print("Saved            : unreadable — \(error)")
         }
     }
 }
