@@ -12,7 +12,7 @@ final class UsageDaemonTests: XCTestCase {
         )
         let client = MockUsageFetcher(behavior: .success(usage))
         let creds = MockCredentialLoader(.success(MockCredentialLoader.dummy))
-        let daemon = UsageDaemon(client: client, credentialStore: creds, history: .temporary(), autoStart: false)
+        let daemon = UsageDaemon(client: client, credentialStore: creds, vault: InMemoryVault(), history: .temporary(), autoStart: false)
 
         daemon.start()
         try await waitForUsage(daemon)
@@ -27,7 +27,7 @@ final class UsageDaemonTests: XCTestCase {
     func testNetworkErrorMarksStaleAndSurfacesMessage() async throws {
         let client = MockUsageFetcher(behavior: .failure(.network("connection refused")))
         let creds = MockCredentialLoader(.success(MockCredentialLoader.dummy))
-        let daemon = UsageDaemon(client: client, credentialStore: creds, history: .temporary(), autoStart: false)
+        let daemon = UsageDaemon(client: client, credentialStore: creds, vault: InMemoryVault(), history: .temporary(), autoStart: false)
 
         daemon.start()
         try await waitForError(daemon)
@@ -41,7 +41,7 @@ final class UsageDaemonTests: XCTestCase {
     func testUnauthorizedSurfacesAuthError() async throws {
         let client = MockUsageFetcher(behavior: .failure(.unauthorized))
         let creds = MockCredentialLoader(.success(MockCredentialLoader.dummy))
-        let daemon = UsageDaemon(client: client, credentialStore: creds, history: .temporary(), autoStart: false)
+        let daemon = UsageDaemon(client: client, credentialStore: creds, vault: InMemoryVault(), history: .temporary(), autoStart: false)
 
         daemon.start()
         try await waitForError(daemon)
@@ -53,7 +53,7 @@ final class UsageDaemonTests: XCTestCase {
     func testCredentialFailureSurfacedAsError() async throws {
         let client = MockUsageFetcher(behavior: .success(.empty))
         let creds = MockCredentialLoader(.failure(.notFound))
-        let daemon = UsageDaemon(client: client, credentialStore: creds, history: .temporary(), autoStart: false)
+        let daemon = UsageDaemon(client: client, credentialStore: creds, vault: InMemoryVault(), history: .temporary(), autoStart: false)
 
         daemon.start()
         try await waitForError(daemon)
@@ -69,7 +69,7 @@ final class UsageDaemonTests: XCTestCase {
             UsageData(sessionPercent: 1, sessionResetAt: nil, weeklyPercent: 1,
                      weeklyResetAt: nil, lastUpdated: .now, isStale: false, rawHeaders: [:])
         ))
-        let daemon = UsageDaemon(client: client, credentialStore: creds, history: .temporary(), autoStart: false)
+        let daemon = UsageDaemon(client: client, credentialStore: creds, vault: InMemoryVault(), history: .temporary(), autoStart: false)
         await daemon.refreshNow()
         await daemon.refreshNow()
         await daemon.refreshNow()
@@ -81,7 +81,7 @@ final class UsageDaemonTests: XCTestCase {
     func testUnauthorizedInvalidatesCredentialCache() async throws {
         let creds = MockCredentialLoader(.success(MockCredentialLoader.dummy))
         let client = MockUsageFetcher(behavior: .failure(.unauthorized))
-        let daemon = UsageDaemon(client: client, credentialStore: creds, history: .temporary(), autoStart: false)
+        let daemon = UsageDaemon(client: client, credentialStore: creds, vault: InMemoryVault(), history: .temporary(), autoStart: false)
         await daemon.refreshNow()
         await daemon.refreshNow()
         XCTAssertEqual(creds.loadCallCount, 2, "401 should drop the cache; next poll re-reads keychain")
@@ -91,7 +91,7 @@ final class UsageDaemonTests: XCTestCase {
     func testExplicitInvalidateForcesReload() async throws {
         let creds = MockCredentialLoader(.success(MockCredentialLoader.dummy))
         let client = MockUsageFetcher(behavior: .success(.empty))
-        let daemon = UsageDaemon(client: client, credentialStore: creds, history: .temporary(), autoStart: false)
+        let daemon = UsageDaemon(client: client, credentialStore: creds, vault: InMemoryVault(), history: .temporary(), autoStart: false)
         await daemon.refreshNow()
         XCTAssertEqual(creds.loadCallCount, 1)
         daemon.invalidateCredentials()
@@ -106,10 +106,142 @@ final class UsageDaemonTests: XCTestCase {
                      weeklyResetAt: nil, lastUpdated: .now, isStale: false, rawHeaders: [:])
         ))
         let creds = MockCredentialLoader(.success(MockCredentialLoader.dummy))
-        let daemon = UsageDaemon(client: client, credentialStore: creds, history: .temporary(), autoStart: false)
+        let daemon = UsageDaemon(client: client, credentialStore: creds, vault: InMemoryVault(), history: .temporary(), autoStart: false)
         await daemon.refreshNow()
         XCTAssertEqual(daemon.usage.sessionPercent, 5)
         XCTAssertGreaterThanOrEqual(client.callCount, 1)
+    }
+
+
+    // MARK: - Saved credential (ClawdBar's own keychain item)
+
+    @MainActor
+    func testSuccessfulReadIsMirroredIntoTheVault() async throws {
+        let vault = InMemoryVault()
+        let creds = MockCredentialLoader(.success(MockCredentialLoader.dummy))
+        let daemon = UsageDaemon(client: MockUsageFetcher(behavior: .success(.empty)),
+                                 credentialStore: creds, vault: vault,
+                                 history: .temporary(), autoStart: false)
+        await daemon.refreshNow()
+
+        XCTAssertEqual(vault.current?.accessToken, "tok")
+        XCTAssertEqual(vault.current?.origin, .mirror)
+        XCTAssertEqual(daemon.savedCredentialInfo?.origin, .mirror)
+    }
+
+    @MainActor
+    func testFreshVaultEntrySkipsTheClaudeCodeKeychainEntirely() async throws {
+        // The whole point of the feature: a saved token means zero reads of
+        // Claude Code's item, which is the read that can prompt for a password.
+        let saved = SavedCredential(
+            accessToken: "saved-token", refreshToken: nil,
+            expiresAt: Date(timeIntervalSinceNow: 3600), scopes: [],
+            subscriptionType: "max", rateLimitTier: "tier",
+            origin: .mirror, savedAt: Date()
+        )
+        let creds = MockCredentialLoader(.success(MockCredentialLoader.dummy))
+        let daemon = UsageDaemon(client: MockUsageFetcher(behavior: .success(.empty)),
+                                 credentialStore: creds, vault: InMemoryVault(seed: saved),
+                                 history: .temporary(), autoStart: false)
+        await daemon.refreshNow()
+        await daemon.refreshNow()
+
+        XCTAssertEqual(creds.loadCallCount, 0, "a live saved token must not trigger a keychain read")
+        XCTAssertEqual(daemon.subscriptionType, "max")
+    }
+
+    @MainActor
+    func testExpiredMirrorIsDroppedAndSourceIsReRead() async throws {
+        let stale = SavedCredential(
+            accessToken: "stale", refreshToken: nil,
+            expiresAt: Date(timeIntervalSinceNow: -60), scopes: [],
+            subscriptionType: nil, rateLimitTier: nil,
+            origin: .mirror, savedAt: Date(timeIntervalSinceNow: -7200)
+        )
+        let vault = InMemoryVault(seed: stale)
+        let creds = MockCredentialLoader(.success(MockCredentialLoader.dummy))
+        let daemon = UsageDaemon(client: MockUsageFetcher(behavior: .success(.empty)),
+                                 credentialStore: creds, vault: vault,
+                                 history: .temporary(), autoStart: false)
+        await daemon.refreshNow()
+
+        XCTAssertEqual(creds.loadCallCount, 1)
+        XCTAssertEqual(vault.current?.accessToken, "tok", "the stale mirror should have been replaced")
+    }
+
+    @MainActor
+    func testUnauthorizedDropsTheMirror() async throws {
+        let vault = InMemoryVault()
+        let creds = MockCredentialLoader(.success(MockCredentialLoader.dummy))
+        let daemon = UsageDaemon(client: MockUsageFetcher(behavior: .failure(.unauthorized)),
+                                 credentialStore: creds, vault: vault,
+                                 history: .temporary(), autoStart: false)
+        await daemon.refreshNow()
+
+        XCTAssertNil(vault.current, "a rejected mirror is worthless — Claude Code holds a newer token")
+        XCTAssertNil(daemon.savedCredentialInfo)
+    }
+
+    @MainActor
+    func testUnauthorizedKeepsAPastedTokenAndSaysWhatToDo() async throws {
+        let vault = InMemoryVault()
+        let creds = MockCredentialLoader(.success(MockCredentialLoader.dummy))
+        let daemon = UsageDaemon(client: MockUsageFetcher(behavior: .failure(.unauthorized)),
+                                 credentialStore: creds, vault: vault,
+                                 history: .temporary(), autoStart: false)
+        try daemon.saveUserToken("  sk-ant-oat01-pasted  ")
+        await daemon.refreshNow()
+
+        XCTAssertEqual(vault.current?.accessToken, "sk-ant-oat01-pasted", "trimmed, and not discarded on 401")
+        XCTAssertEqual(vault.current?.origin, .pasted)
+        XCTAssertTrue(daemon.lastError?.contains("setup-token") ?? false)
+        XCTAssertEqual(creds.loadCallCount, 0, "a pasted token never falls back to Claude Code's item")
+    }
+
+    @MainActor
+    func testPastedTokenSurvivesReReadCredentialsButNotForget() async throws {
+        let vault = InMemoryVault()
+        let daemon = UsageDaemon(client: MockUsageFetcher(behavior: .success(.empty)),
+                                 credentialStore: MockCredentialLoader(.success(MockCredentialLoader.dummy)),
+                                 vault: vault, history: .temporary(), autoStart: false)
+        try daemon.saveUserToken("sk-ant-oat01-pasted")
+
+        daemon.invalidateCredentials()
+        XCTAssertEqual(vault.current?.origin, .pasted, "`Re-read credentials` must not delete a deliberate choice")
+
+        daemon.forgetSavedCredential()
+        XCTAssertNil(vault.current)
+        XCTAssertNil(daemon.savedCredentialInfo)
+    }
+
+    @MainActor
+    func testEmptyPastedTokenIsRejected() async throws {
+        let vault = InMemoryVault()
+        let daemon = UsageDaemon(client: MockUsageFetcher(behavior: .success(.empty)),
+                                 credentialStore: MockCredentialLoader(.success(MockCredentialLoader.dummy)),
+                                 vault: vault, history: .temporary(), autoStart: false)
+        XCTAssertThrowsError(try daemon.saveUserToken("   "))
+        XCTAssertNil(vault.current)
+    }
+
+    @MainActor
+    func testUnreadableVaultFallsBackToTheSourceAndStopsRetrying() async throws {
+        // If the user dismisses the prompt for ClawdBar's own item, retrying
+        // it every poll would be a prompt every poll. One failure disables it.
+        let vault = InMemoryVault()
+        vault.failure = .accessDenied
+        let creds = MockCredentialLoader(.success(MockCredentialLoader.dummy))
+        let daemon = UsageDaemon(client: MockUsageFetcher(behavior: .success(.empty)),
+                                 credentialStore: creds, vault: vault,
+                                 history: .temporary(), autoStart: false)
+        await daemon.refreshNow()
+        daemon.invalidateCredentials()
+        await daemon.refreshNow()
+
+        XCTAssertEqual(vault.loadCallCount, 1, "the vault is only tried once per session")
+        XCTAssertEqual(creds.loadCallCount, 2, "usage keeps working off Claude Code's item")
+        XCTAssertNotNil(daemon.vaultError)
+        XCTAssertNil(daemon.lastError, "a vault problem must not surface as a usage error")
     }
 
     // MARK: - Helpers
@@ -183,6 +315,46 @@ final class MockCredentialLoader: CredentialLoading, @unchecked Sendable {
         switch outcome {
         case .success(let c): return c
         case .failure(let e): throw e
+        }
+    }
+}
+
+/// Stands in for `KeychainTokenVault`. Without it every daemon built here
+/// would create — and rewrite — a real keychain item on the developer's Mac.
+final class InMemoryVault: CredentialVaulting, @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: SavedCredential?
+    private(set) var loadCallCount = 0
+    private(set) var saveCallCount = 0
+    private(set) var clearCallCount = 0
+    /// When set, every operation throws it — models a vault we lost access to.
+    var failure: KeychainTokenVault.VaultError?
+
+    init(seed: SavedCredential? = nil) { stored = seed }
+
+    var current: SavedCredential? { lock.withLock { stored } }
+
+    func load() throws -> SavedCredential? {
+        try lock.withLock {
+            loadCallCount += 1
+            if let failure { throw failure }
+            return stored
+        }
+    }
+
+    func save(_ credential: SavedCredential) throws {
+        try lock.withLock {
+            saveCallCount += 1
+            if let failure { throw failure }
+            stored = credential
+        }
+    }
+
+    func clear() throws {
+        try lock.withLock {
+            clearCallCount += 1
+            if let failure { throw failure }
+            stored = nil
         }
     }
 }
