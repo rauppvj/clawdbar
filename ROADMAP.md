@@ -5,6 +5,32 @@ where the project is headed.
 
 ## Recently shipped
 
+### Saved credential — landed 2026-09-04
+
+macOS kept asking for the login password because ClawdBar read a keychain item
+it does not own. Claude Code rewrites `Claude Code-credentials` on every OAuth
+refresh (~5 h), and a rewrite by another process invalidates the per-app ACL
+entry that "Always Allow" created — so the next read prompted again.
+
+ClawdBar now mirrors the token into **its own** keychain item
+(`com.vinicius.clawdbar.credentials`, `Services/TokenVault.swift`) and reads
+that first. It is the only writer of that item, so the authorization survives;
+a launch with a live saved token performs zero reads of Claude Code's item. A
+mirror is dropped when it expires or when the API answers 401, and Preferences
+→ Data Source → Saved credential shows what is stored and deletes it in one
+click (`--forget-credential` does the same from the terminal).
+
+The mirror still ages out with the token, so **Use my own token** was added
+next to it: paste the output of `claude setup-token` and ClawdBar stops
+touching Claude Code's item entirely — no prompt, ever. A 401 on that one is
+reported as "re-run setup-token" instead of silently discarding the user's
+choice.
+
+Still open here: the ACL is bound to the app's code signature, so an ad-hoc
+build re-prompts once after every rebuild. Developer ID signing fixes that for
+released builds; a sandboxed/entitled build could move to the data-protection
+keychain, which has no ACL prompts at all.
+
 ### Service status — landed 2026-09-03
 
 ClawdBar now mirrors [status.claude.com](https://status.claude.com): the overall
@@ -99,8 +125,11 @@ nice-to-have, not part of the core usage-dashboard identity.
 ## Known limitations
 
 - **Token refresh.** Claude Code OAuth tokens have a ~5 h life. On 401 you
-  need to re-run `claude /login`. Automatic refresh against the Anthropic
-  OAuth endpoint is on the wishlist; see [CONTRIBUTING.md](./CONTRIBUTING.md#things-on-the-wishlist).
+  need to re-run `claude /login`, or save a long-lived `claude setup-token`
+  token in Preferences → Data Source, which sidesteps the expiry entirely.
+  Refreshing the OAuth pair ourselves stays on the wishlist and stays risky:
+  if Anthropic rotates refresh tokens on use, ClawdBar would silently sign the
+  CLI out. See [CONTRIBUTING.md](./CONTRIBUTING.md#things-on-the-wishlist).
 - **API-direct support.** Today only the Claude Code OAuth path is wired
   (Pro / Max / Team). Anthropic API keys from console.anthropic.com use a
   different auth scheme (`x-api-key`) and a different rate-limit header

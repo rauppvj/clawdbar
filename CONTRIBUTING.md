@@ -106,7 +106,8 @@ tools/Preview.cs     ← dev harness for rendering forms in isolation
 
 | Idea | Why | Sketch |
 |---|---|---|
-| OAuth refresh-token flow | Today users have to re-run `claude /login` after ~5h. Wire up the Anthropic refresh-token endpoint and write the new pair back to keychain via `SecItemUpdate`. | Confirm the endpoint URL + payload from the Claude Code source or community docs first — we don't want to corrupt the stored credential. |
+| OAuth refresh-token flow | Today users re-run `claude /login` after ~5h, or save a long-lived `claude setup-token` token (Preferences → Data Source) to skip the expiry. Refreshing the pair ourselves would keep the mirror alive without either. | Confirm the endpoint URL + payload from the Claude Code source or community docs first — we don't want to corrupt the stored credential. **Settle rotation first:** if the refresh token is single-use, ClawdBar redeeming it invalidates the CLI's copy and signs the user out of `claude`. That is a worse bug than the prompt this would remove, so it needs proof before it ships. |
+| Developer ID signing for the saved credential | `Services/TokenVault.swift` stores the token in a ClawdBar-owned keychain item; its ACL is bound to the app's code signature, so every ad-hoc rebuild costs one re-approval. | Sign with a Developer ID so the designated requirement is stable across updates. With an entitled/sandboxed build, `kSecUseDataProtectionKeychain` would drop ACL prompts altogether — worth measuring once a team ID exists. |
 | Anthropic API key support | Today only the Claude Code OAuth path is wired up (Pro / Max / Max 20× / Team). API-direct users (api keys from console.anthropic.com) can't use ClawdBar yet. | Add a second `CredentialSource.apiKey(String)` case; auth via `x-api-key` instead of `Authorization: Bearer`; parse the different header family (`anthropic-ratelimit-requests-*`, `anthropic-ratelimit-tokens-*`, `anthropic-ratelimit-input-tokens-*`, `anthropic-ratelimit-output-tokens-*`); add a settings panel for the key (secure text field, store in Keychain under a ClawdBar-owned item); add a `UsageData.kind` enum so the popover can render either 5h/7d windows OR rolling RPM/TPM gauges. |
 | Final mascot art | Today's procedural pixel mascot (`Views/Mascot/MascotView.swift`, Canvas paths, mood-driven eyes/mouth) is a placeholder while the owner finishes design studies. | Either keep the Canvas approach and rewrite the cell layout, or switch to a sprite-sheet asset rendered into `MascotImage.render(...)`. Preserve the `UsageData.Mood` enum so other features that read it (menu bar icon, status dot, overlay) still work. |
 | Tamagotchi page (4th carousel slide) | Animated mascot doing idle stuff in its own page of the floating overlay — blinking, hopping, snacking, reacting to usage spikes. | Add `Views/Overlay/TamagotchiPage.swift`; use `TimelineView` to drive multi-frame sprite animation; wire as page 3 in `OverlayCarousel`. Coordinate with the mascot redesign so they share assets. |
@@ -125,7 +126,8 @@ Please include:
 
 - ClawdBar version and macOS version
 - Output of `.build/release/ClawdBar --probe-credentials` (it's safe — values
-  are replaced with `present (N chars)`)
+  are replaced with `present (N chars)`; it also reports ClawdBar's own saved
+  credential, which `--forget-credential` clears)
 - Output of `.build/release/ClawdBar --probe-api` if the issue is data-related
 - Whatever the popover's footer error tag says (`AUTH`, `RATE`, `OFFLINE`, …)
 
