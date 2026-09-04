@@ -93,7 +93,13 @@ struct OnboardingView: View {
                 .font(Theme.retro(size: 16))
                 .foregroundStyle(Theme.textPrimary)
 
-            Text("ClawdBar reads your existing Claude Code OAuth token from the macOS Keychain. Works with any Claude Code plan (Pro, Max, Max 20×). macOS will ask you to approve once — choose **Always Allow** so future polls run silently.")
+            Text("ClawdBar reads your existing Claude Code OAuth token from the macOS Keychain. Works with any Claude Code plan (Pro, Max, Max 20×). macOS will ask you to approve once — choose **Always Allow**.")
+                .multilineTextAlignment(.center)
+                .foregroundStyle(Theme.textSecondary)
+                .frame(maxWidth: 420)
+
+            Text("ClawdBar then keeps its own encrypted copy in a keychain item it owns, so it doesn't have to ask again on every launch. You can inspect or delete it any time in Preferences → Data Source.")
+                .font(.caption)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(Theme.textSecondary)
                 .frame(maxWidth: 420)

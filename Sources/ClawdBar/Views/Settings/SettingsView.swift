@@ -246,6 +246,10 @@ private struct DataSourceTab: View {
 
     @State private var testResult: String?
     @State private var isTesting = false
+    @State private var tokenDraft = ""
+    @State private var showTokenField = false
+    @State private var tokenResult: String?
+    @State private var forgetConfirm = false
 
     var body: some View {
         Form {
@@ -258,6 +262,51 @@ private struct DataSourceTab: View {
                     Text("~/.claude/.credentials.json")
                         .font(.system(.body, design: .monospaced))
                         .foregroundStyle(.secondary)
+                }
+            }
+            Section("Saved credential") {
+                LabeledContent("Stored") {
+                    Text(savedLabel)
+                        .foregroundStyle(.secondary)
+                }
+                Text("ClawdBar keeps its own copy of the token in a keychain item it owns — encrypted by macOS, readable only by ClawdBar, never written to a file. It exists so ClawdBar stops re-reading Claude Code's item, which is what makes macOS ask for your password: the CLI rewrites that item on every token refresh, and each rewrite revokes the access you granted.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if let vaultError = daemon.vaultError {
+                    Text(vaultError)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .lineLimit(3)
+                }
+                HStack {
+                    Button(showTokenField ? "Cancel" : "Use my own token…") {
+                        showTokenField.toggle()
+                        tokenDraft = ""
+                        tokenResult = nil
+                    }
+                    Button("Forget saved credential") {
+                        forgetConfirm = true
+                    }
+                    .disabled(daemon.savedCredentialInfo == nil)
+                }
+                if showTokenField {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Run `claude setup-token` in Terminal and paste the long-lived token here. While one is saved, ClawdBar never touches Claude Code's keychain item — so macOS never asks for your password again.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        HStack {
+                            SecureField("sk-ant-oat01-…", text: $tokenDraft)
+                                .textFieldStyle(.roundedBorder)
+                            Button("Save token") { saveToken() }
+                                .disabled(tokenDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+                    }
+                }
+                if let tokenResult {
+                    Text(tokenResult)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
                 }
             }
             Section("Connection") {
@@ -340,6 +389,19 @@ private struct DataSourceTab: View {
             }
         }
         .formStyle(.grouped)
+        .confirmationDialog(
+            "Forget the saved credential?",
+            isPresented: $forgetConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Forget", role: .destructive) {
+                daemon.forgetSavedCredential()
+                tokenResult = "Removed. The next poll reads Claude Code's keychain item again — macOS may ask you to approve it."
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Deletes ClawdBar's own keychain item. Your Claude Code login is untouched; ClawdBar goes back to reading its credentials, which is what triggers the macOS password prompt.")
+        }
     }
 
     private var statusSummary: String {
@@ -357,9 +419,50 @@ private struct DataSourceTab: View {
     }
 
     private var sourceLabel: String {
-        switch daemon.usage.rawHeaders.isEmpty {
-        case true: return "Probing…"
-        case false: return "macOS Keychain"
+        if let info = daemon.savedCredentialInfo {
+            return info.origin == .pasted
+                ? "Your own token, saved in ClawdBar"
+                : "macOS Keychain (mirrored into ClawdBar)"
+        }
+        return daemon.usage.rawHeaders.isEmpty ? "Probing…" : "macOS Keychain"
+    }
+
+    private var savedLabel: String {
+        guard let info = daemon.savedCredentialInfo else {
+            return "Nothing saved yet"
+        }
+        var parts = [info.origin == .pasted ? "Token you pasted" : "Copy of your Claude Code token"]
+        if let expiresAt = info.expiresAt {
+            let delta = expiresAt.timeIntervalSinceNow
+            parts.append(delta <= 0
+                ? "expired"
+                : "expires in \(Self.durationLabel(delta))")
+        } else {
+            parts.append("no expiry")
+        }
+        return parts.joined(separator: " — ")
+    }
+
+    private static func durationLabel(_ seconds: TimeInterval) -> String {
+        if seconds < 3600 { return "\(Int(seconds / 60))m" }
+        if seconds < 86_400 { return "\(Int(seconds / 3600))h" }
+        return "\(Int(seconds / 86_400))d"
+    }
+
+    private func saveToken() {
+        do {
+            try daemon.saveUserToken(tokenDraft)
+            tokenDraft = ""
+            showTokenField = false
+            tokenResult = "Saved. Testing it…"
+            Task {
+                await runTest()
+                tokenResult = daemon.lastError == nil
+                    ? "Saved and working. ClawdBar will not read Claude Code's keychain item any more."
+                    : "Saved, but the API rejected it: \(daemon.lastError ?? "")"
+            }
+        } catch {
+            tokenResult = "Could not save: \(error)"
         }
     }
 

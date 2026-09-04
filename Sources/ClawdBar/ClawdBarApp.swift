@@ -27,6 +27,9 @@ struct ClawdBarApp: App {
         if args.contains(StatusProbeCommand.flag) {
             exit(StatusProbeCommand.run())
         }
+        if args.contains(ForgetCredentialCommand.flag) {
+            exit(ForgetCredentialCommand.run())
+        }
         NSApplication.shared.setActivationPolicy(.accessory)
         BundledFont.registerAll()
 
