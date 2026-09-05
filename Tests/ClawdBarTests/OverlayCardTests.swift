@@ -58,7 +58,7 @@ final class OverlayCardTests: XCTestCase {
         let daemon = UsageDaemon(
             client: MockUsageFetcher(behavior: .success(usage)),
             credentialStore: MockCredentialLoader(.success(MockCredentialLoader.dummy)),
-            history: .temporary(),
+            history: .temporary(), profileStore: NoProfileStore(),
             autoStart: false
         )
         // Populates `daemon.usage` through the real code path — the mock

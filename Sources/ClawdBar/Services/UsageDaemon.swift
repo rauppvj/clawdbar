@@ -20,11 +20,24 @@ final class UsageDaemon {
     /// touching it rather than re-prompting on every poll.
     private(set) var vaultError: String?
 
-    /// Best-effort subscription type from the OAuth token (e.g. "max", "pro").
-    /// nil if we haven't fetched credentials yet or the value isn't present.
-    var subscriptionType: String? { cachedCredentials?.subscriptionType }
+    /// What Claude Code currently believes about the account, read from
+    /// ~/.claude.json. Preferred over the token claims because a refreshed
+    /// token keeps whatever plan it was minted with.
+    private(set) var accountProfile: AccountProfile?
+
+    /// Best-effort plan family (e.g. "claude_max", "max", "pro"). nil until we
+    /// have either a profile or credentials.
+    var subscriptionType: String? {
+        accountProfile?.organizationType ?? cachedCredentials?.subscriptionType
+    }
     /// Internal tier identifier (e.g. "default_claude_max_5x"). Opaque, used for diagnostics.
-    var rateLimitTier: String? { cachedCredentials?.rateLimitTier }
+    var rateLimitTier: String? {
+        accountProfile?.tier ?? cachedCredentials?.rateLimitTier
+    }
+    /// Where the plan pill's text came from, for the Preferences diagnostics.
+    var planSource: String {
+        accountProfile != nil ? "~/.claude.json" : "OAuth token claims"
+    }
 
     /// Configurable poll interval. Floored at 30s per spec.
     var pollInterval: TimeInterval = 60
@@ -35,6 +48,8 @@ final class UsageDaemon {
     private var pollTask: Task<Void, Never>?
     private var observers: [NSObjectProtocol] = []
     private var cachedCredentials: Credentials?
+    private let profileStore: AccountProfileLoading
+    private var profileModifiedAt: Date?
     private var vaultAvailable = true
     let history: UsageHistoryStore
 
@@ -43,16 +58,19 @@ final class UsageDaemon {
         credentialStore: CredentialLoading = CredentialStore(),
         vault: CredentialVaulting = KeychainTokenVault(),
         history: UsageHistoryStore = UsageHistoryStore(),
+        profileStore: AccountProfileLoading = AccountProfileStore(),
         autoStart: Bool = true
     ) {
         self.client = client
         self.credentialStore = credentialStore
         self.vault = vault
         self.history = history
+        self.profileStore = profileStore
         // Seed from our own keychain item before anything else runs. When it
         // holds a live token the whole session can go by without ever touching
         // Claude Code's item — which is the only read that can prompt.
         cachedCredentials = usableSavedCredential().map(Credentials.init(saved:))
+        refreshAccountProfile()
         registerSystemObservers()
         if autoStart {
             start()
@@ -157,6 +175,18 @@ final class UsageDaemon {
         }
     }
 
+    /// Re-parses ~/.claude.json only when its mtime changed — the file is a
+    /// few hundred KB of unrelated Claude Code state and this runs on every
+    /// poll.
+    private func refreshAccountProfile() {
+        let modified = profileStore.modifiedAt()
+        if accountProfile != nil, modified == profileModifiedAt { return }
+        profileModifiedAt = modified
+        if let profile = profileStore.load() {
+            accountProfile = profile
+        }
+    }
+
     private var effectiveInterval: TimeInterval {
         let base = max(30, pollInterval)
         return ProcessInfo.processInfo.isLowPowerModeEnabled ? base * 5 : base
@@ -165,6 +195,9 @@ final class UsageDaemon {
     private func fetchOnce(reason: FetchReason) async {
         isFetching = true
         defer { isFetching = false }
+        // A plan change lands in ~/.claude.json without any token being
+        // re-issued, so re-read it whenever the file has moved.
+        refreshAccountProfile()
         do {
             let credentials = try loadCachedCredentials()
             let fresh = try await client.fetchUsage(using: credentials)

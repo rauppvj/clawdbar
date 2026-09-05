@@ -12,7 +12,7 @@ final class UsageDaemonTests: XCTestCase {
         )
         let client = MockUsageFetcher(behavior: .success(usage))
         let creds = MockCredentialLoader(.success(MockCredentialLoader.dummy))
-        let daemon = UsageDaemon(client: client, credentialStore: creds, vault: InMemoryVault(), history: .temporary(), autoStart: false)
+        let daemon = UsageDaemon(client: client, credentialStore: creds, vault: InMemoryVault(), history: .temporary(), profileStore: NoProfileStore(), autoStart: false)
 
         daemon.start()
         try await waitForUsage(daemon)
@@ -27,7 +27,7 @@ final class UsageDaemonTests: XCTestCase {
     func testNetworkErrorMarksStaleAndSurfacesMessage() async throws {
         let client = MockUsageFetcher(behavior: .failure(.network("connection refused")))
         let creds = MockCredentialLoader(.success(MockCredentialLoader.dummy))
-        let daemon = UsageDaemon(client: client, credentialStore: creds, vault: InMemoryVault(), history: .temporary(), autoStart: false)
+        let daemon = UsageDaemon(client: client, credentialStore: creds, vault: InMemoryVault(), history: .temporary(), profileStore: NoProfileStore(), autoStart: false)
 
         daemon.start()
         try await waitForError(daemon)
@@ -41,7 +41,7 @@ final class UsageDaemonTests: XCTestCase {
     func testUnauthorizedSurfacesAuthError() async throws {
         let client = MockUsageFetcher(behavior: .failure(.unauthorized))
         let creds = MockCredentialLoader(.success(MockCredentialLoader.dummy))
-        let daemon = UsageDaemon(client: client, credentialStore: creds, vault: InMemoryVault(), history: .temporary(), autoStart: false)
+        let daemon = UsageDaemon(client: client, credentialStore: creds, vault: InMemoryVault(), history: .temporary(), profileStore: NoProfileStore(), autoStart: false)
 
         daemon.start()
         try await waitForError(daemon)
@@ -53,7 +53,7 @@ final class UsageDaemonTests: XCTestCase {
     func testCredentialFailureSurfacedAsError() async throws {
         let client = MockUsageFetcher(behavior: .success(.empty))
         let creds = MockCredentialLoader(.failure(.notFound))
-        let daemon = UsageDaemon(client: client, credentialStore: creds, vault: InMemoryVault(), history: .temporary(), autoStart: false)
+        let daemon = UsageDaemon(client: client, credentialStore: creds, vault: InMemoryVault(), history: .temporary(), profileStore: NoProfileStore(), autoStart: false)
 
         daemon.start()
         try await waitForError(daemon)
@@ -69,7 +69,7 @@ final class UsageDaemonTests: XCTestCase {
             UsageData(sessionPercent: 1, sessionResetAt: nil, weeklyPercent: 1,
                      weeklyResetAt: nil, lastUpdated: .now, isStale: false, rawHeaders: [:])
         ))
-        let daemon = UsageDaemon(client: client, credentialStore: creds, vault: InMemoryVault(), history: .temporary(), autoStart: false)
+        let daemon = UsageDaemon(client: client, credentialStore: creds, vault: InMemoryVault(), history: .temporary(), profileStore: NoProfileStore(), autoStart: false)
         await daemon.refreshNow()
         await daemon.refreshNow()
         await daemon.refreshNow()
@@ -81,7 +81,7 @@ final class UsageDaemonTests: XCTestCase {
     func testUnauthorizedInvalidatesCredentialCache() async throws {
         let creds = MockCredentialLoader(.success(MockCredentialLoader.dummy))
         let client = MockUsageFetcher(behavior: .failure(.unauthorized))
-        let daemon = UsageDaemon(client: client, credentialStore: creds, vault: InMemoryVault(), history: .temporary(), autoStart: false)
+        let daemon = UsageDaemon(client: client, credentialStore: creds, vault: InMemoryVault(), history: .temporary(), profileStore: NoProfileStore(), autoStart: false)
         await daemon.refreshNow()
         await daemon.refreshNow()
         XCTAssertEqual(creds.loadCallCount, 2, "401 should drop the cache; next poll re-reads keychain")
@@ -91,7 +91,7 @@ final class UsageDaemonTests: XCTestCase {
     func testExplicitInvalidateForcesReload() async throws {
         let creds = MockCredentialLoader(.success(MockCredentialLoader.dummy))
         let client = MockUsageFetcher(behavior: .success(.empty))
-        let daemon = UsageDaemon(client: client, credentialStore: creds, vault: InMemoryVault(), history: .temporary(), autoStart: false)
+        let daemon = UsageDaemon(client: client, credentialStore: creds, vault: InMemoryVault(), history: .temporary(), profileStore: NoProfileStore(), autoStart: false)
         await daemon.refreshNow()
         XCTAssertEqual(creds.loadCallCount, 1)
         daemon.invalidateCredentials()
@@ -106,7 +106,7 @@ final class UsageDaemonTests: XCTestCase {
                      weeklyResetAt: nil, lastUpdated: .now, isStale: false, rawHeaders: [:])
         ))
         let creds = MockCredentialLoader(.success(MockCredentialLoader.dummy))
-        let daemon = UsageDaemon(client: client, credentialStore: creds, vault: InMemoryVault(), history: .temporary(), autoStart: false)
+        let daemon = UsageDaemon(client: client, credentialStore: creds, vault: InMemoryVault(), history: .temporary(), profileStore: NoProfileStore(), autoStart: false)
         await daemon.refreshNow()
         XCTAssertEqual(daemon.usage.sessionPercent, 5)
         XCTAssertGreaterThanOrEqual(client.callCount, 1)
@@ -121,7 +121,7 @@ final class UsageDaemonTests: XCTestCase {
         let creds = MockCredentialLoader(.success(MockCredentialLoader.dummy))
         let daemon = UsageDaemon(client: MockUsageFetcher(behavior: .success(.empty)),
                                  credentialStore: creds, vault: vault,
-                                 history: .temporary(), autoStart: false)
+                                 history: .temporary(), profileStore: NoProfileStore(), autoStart: false)
         await daemon.refreshNow()
 
         XCTAssertEqual(vault.current?.accessToken, "tok")
@@ -142,7 +142,7 @@ final class UsageDaemonTests: XCTestCase {
         let creds = MockCredentialLoader(.success(MockCredentialLoader.dummy))
         let daemon = UsageDaemon(client: MockUsageFetcher(behavior: .success(.empty)),
                                  credentialStore: creds, vault: InMemoryVault(seed: saved),
-                                 history: .temporary(), autoStart: false)
+                                 history: .temporary(), profileStore: NoProfileStore(), autoStart: false)
         await daemon.refreshNow()
         await daemon.refreshNow()
 
@@ -162,7 +162,7 @@ final class UsageDaemonTests: XCTestCase {
         let creds = MockCredentialLoader(.success(MockCredentialLoader.dummy))
         let daemon = UsageDaemon(client: MockUsageFetcher(behavior: .success(.empty)),
                                  credentialStore: creds, vault: vault,
-                                 history: .temporary(), autoStart: false)
+                                 history: .temporary(), profileStore: NoProfileStore(), autoStart: false)
         await daemon.refreshNow()
 
         XCTAssertEqual(creds.loadCallCount, 1)
@@ -175,7 +175,7 @@ final class UsageDaemonTests: XCTestCase {
         let creds = MockCredentialLoader(.success(MockCredentialLoader.dummy))
         let daemon = UsageDaemon(client: MockUsageFetcher(behavior: .failure(.unauthorized)),
                                  credentialStore: creds, vault: vault,
-                                 history: .temporary(), autoStart: false)
+                                 history: .temporary(), profileStore: NoProfileStore(), autoStart: false)
         await daemon.refreshNow()
 
         XCTAssertNil(vault.current, "a rejected mirror is worthless — Claude Code holds a newer token")
@@ -188,7 +188,7 @@ final class UsageDaemonTests: XCTestCase {
         let creds = MockCredentialLoader(.success(MockCredentialLoader.dummy))
         let daemon = UsageDaemon(client: MockUsageFetcher(behavior: .failure(.unauthorized)),
                                  credentialStore: creds, vault: vault,
-                                 history: .temporary(), autoStart: false)
+                                 history: .temporary(), profileStore: NoProfileStore(), autoStart: false)
         try daemon.saveUserToken("  sk-ant-oat01-pasted  ")
         await daemon.refreshNow()
 
@@ -203,7 +203,7 @@ final class UsageDaemonTests: XCTestCase {
         let vault = InMemoryVault()
         let daemon = UsageDaemon(client: MockUsageFetcher(behavior: .success(.empty)),
                                  credentialStore: MockCredentialLoader(.success(MockCredentialLoader.dummy)),
-                                 vault: vault, history: .temporary(), autoStart: false)
+                                 vault: vault, history: .temporary(), profileStore: NoProfileStore(), autoStart: false)
         try daemon.saveUserToken("sk-ant-oat01-pasted")
 
         daemon.invalidateCredentials()
@@ -219,7 +219,7 @@ final class UsageDaemonTests: XCTestCase {
         let vault = InMemoryVault()
         let daemon = UsageDaemon(client: MockUsageFetcher(behavior: .success(.empty)),
                                  credentialStore: MockCredentialLoader(.success(MockCredentialLoader.dummy)),
-                                 vault: vault, history: .temporary(), autoStart: false)
+                                 vault: vault, history: .temporary(), profileStore: NoProfileStore(), autoStart: false)
         XCTAssertThrowsError(try daemon.saveUserToken("   "))
         XCTAssertNil(vault.current)
     }
@@ -233,7 +233,7 @@ final class UsageDaemonTests: XCTestCase {
         let creds = MockCredentialLoader(.success(MockCredentialLoader.dummy))
         let daemon = UsageDaemon(client: MockUsageFetcher(behavior: .success(.empty)),
                                  credentialStore: creds, vault: vault,
-                                 history: .temporary(), autoStart: false)
+                                 history: .temporary(), profileStore: NoProfileStore(), autoStart: false)
         await daemon.refreshNow()
         daemon.invalidateCredentials()
         await daemon.refreshNow()
@@ -317,6 +317,15 @@ final class MockCredentialLoader: CredentialLoading, @unchecked Sendable {
         case .failure(let e): throw e
         }
     }
+}
+
+/// Stands in for `AccountProfileStore`. Without it these daemons read the
+/// developer's real `~/.claude.json`, and assertions about the plan claims
+/// would pass or fail depending on whose machine ran them — green on CI, red
+/// locally, which is the worst way round.
+struct NoProfileStore: AccountProfileLoading {
+    func load() -> AccountProfile? { nil }
+    func modifiedAt() -> Date? { nil }
 }
 
 /// Stands in for `KeychainTokenVault`. Without it every daemon built here
