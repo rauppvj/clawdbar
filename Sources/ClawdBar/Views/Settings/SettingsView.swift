@@ -6,6 +6,7 @@ struct SettingsView: View {
     @Bindable var notifications: NotificationManager
     let daemon: UsageDaemon
     let status: StatusMonitor
+    let tokens: TokenUsageMonitor
     var onResetOverlaySize: () -> Void = {}
 
     var body: some View {
@@ -14,7 +15,7 @@ struct SettingsView: View {
             appearance: AppearanceTab(settings: settings),
             floating: FloatingTab(settings: settings, onResetSize: onResetOverlaySize),
             notifications: NotificationsTab(settings: settings, notifications: notifications),
-            dataSource: DataSourceTab(settings: settings, daemon: daemon, status: status),
+            dataSource: DataSourceTab(settings: settings, daemon: daemon, status: status, tokens: tokens),
             about: AboutTab()
         )
     }
@@ -243,6 +244,7 @@ private struct DataSourceTab: View {
     @Bindable var settings: AppSettings
     let daemon: UsageDaemon
     @Bindable var status: StatusMonitor
+    @Bindable var tokens: TokenUsageMonitor
 
     @State private var testResult: String?
     @State private var isTesting = false
@@ -335,6 +337,34 @@ private struct DataSourceTab: View {
                         .lineLimit(4)
                 }
             }
+            Section("Token spend") {
+                ToggleRow(
+                    label: "Chart daily token spend",
+                    value: $settings.tokenUsageEnabled,
+                    defaultValue: AppSettingsDefaults.tokenUsageEnabled
+                )
+                Text("Reads the session transcripts Claude Code already writes to ~/.claude/projects and rolls them up per day and per model. Local files only — nothing is uploaded, and no extra API calls are made.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if settings.tokenUsageEnabled {
+                    HStack {
+                        Button {
+                            Task { await tokens.refreshNow() }
+                        } label: {
+                            if tokens.isScanning {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Text("Rescan now")
+                            }
+                        }
+                        .disabled(tokens.isScanning)
+                    }
+                    Text(tokenSummary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                }
+            }
             Section("Service status") {
                 ToggleRow(
                     label: "Show Claude service status",
@@ -402,6 +432,18 @@ private struct DataSourceTab: View {
         } message: {
             Text("Deletes ClawdBar's own keychain item. Your Claude Code login is untouched; ClawdBar goes back to reading its credentials, which is what triggers the macOS password prompt.")
         }
+    }
+
+    private var tokenSummary: String {
+        if let error = tokens.lastError { return "Last scan failed: \(error)" }
+        guard tokens.hasScanned else { return "Scanning…" }
+        let summary = tokens.summary
+        guard summary.filesSeen > 0 else {
+            return "No transcripts found under ~/.claude/projects yet."
+        }
+        let today = TokenUsageFormat.exact(summary.total(lastDays: 1).total)
+        let week = TokenUsageFormat.exact(summary.total(lastDays: 7).total)
+        return "\(summary.filesSeen) transcript\(summary.filesSeen == 1 ? "" : "s") · \(today) tokens today · \(week) over 7 days."
     }
 
     private var statusSummary: String {

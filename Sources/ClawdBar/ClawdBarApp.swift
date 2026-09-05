@@ -7,6 +7,7 @@ struct ClawdBarApp: App {
     @State private var notifications = NotificationManager()
     @State private var daemon: UsageDaemon
     @State private var status: StatusMonitor
+    @State private var tokens: TokenUsageMonitor
     @State private var overlay: OverlayWindowController?
     @State private var onboarding: OnboardingWindowController
 
@@ -26,6 +27,12 @@ struct ClawdBarApp: App {
         }
         if args.contains(StatusProbeCommand.flag) {
             exit(StatusProbeCommand.run())
+        }
+        if args.contains(TokenRenderCommand.flag) {
+            exit(TokenRenderCommand.run(arguments: args))
+        }
+        if args.contains(TokenProbeCommand.flag) {
+            exit(TokenProbeCommand.run())
         }
         if args.contains(ForgetCredentialCommand.flag) {
             exit(ForgetCredentialCommand.run())
@@ -57,10 +64,14 @@ struct ClawdBarApp: App {
         if loadedSettings.serviceStatusEnabled {
             statusMonitor.start()
         }
+        // Token spend comes from files Claude Code already wrote, so the first
+        // scan can run right away — no credentials, no network, no prompt.
+        let tokenMonitor = TokenUsageMonitor(autoStart: loadedSettings.tokenUsageEnabled)
 
         _settings = State(initialValue: loadedSettings)
         _daemon = State(initialValue: daemon)
         _status = State(initialValue: statusMonitor)
+        _tokens = State(initialValue: tokenMonitor)
         _onboarding = State(initialValue: OnboardingWindowController(settings: loadedSettings, daemon: daemon))
     }
 
@@ -69,6 +80,8 @@ struct ClawdBarApp: App {
             PopoverView(
                 daemon: daemon,
                 status: status,
+                tokens: tokens,
+                settings: settings,
                 onToggleFloating: toggleOverlay
             )
             .onAppear {
@@ -96,6 +109,7 @@ struct ClawdBarApp: App {
                 notifications: notifications,
                 daemon: daemon,
                 status: status,
+                tokens: tokens,
                 onResetOverlaySize: { overlay?.resetSize() }
             )
             .onChange(of: settings.pollInterval) { _, newValue in
@@ -111,6 +125,13 @@ struct ClawdBarApp: App {
             }
             .onChange(of: settings.overlayLocked) { _, newValue in
                 overlay?.setResizable(!newValue)
+            }
+            .onChange(of: settings.tokenUsageEnabled) { _, newValue in
+                // Turning it back on should have numbers ready by the time the
+                // user closes Preferences and opens the popover.
+                if newValue {
+                    Task { await tokens.refreshNow() }
+                }
             }
             .onChange(of: settings.serviceStatusEnabled) { _, newValue in
                 if newValue {
