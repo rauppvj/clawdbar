@@ -4,10 +4,14 @@ import AppKit
 struct PopoverView: View {
     @Bindable var daemon: UsageDaemon
     @Bindable var status: StatusMonitor
+    @Bindable var tokens: TokenUsageMonitor
+    @Bindable var settings: AppSettings
     var onToggleFloating: () -> Void = {}
 
     @Environment(\.openSettings) private var openSettings
     @State private var moodPhase: Int = 0
+    /// Remembered across opens so the popover comes back where it was left.
+    @AppStorage("clawdbar.popover.tab") private var storedTab: String = PopoverTab.tokens.rawValue
 
     var body: some View {
         VStack(spacing: 0) {
@@ -41,12 +45,10 @@ struct PopoverView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 10)
 
-            if status.isPolling {
+            if !availableTabs.isEmpty {
                 Divider().overlay(Theme.stroke)
 
-                ServiceStatusView(monitor: status)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
+                panel
             }
 
             Divider().overlay(Theme.stroke)
@@ -62,11 +64,96 @@ struct PopoverView: View {
             moodPhase = (moodPhase + 1) % 4
         }
         // Opening the menu bar is the moment the answer matters most, so top
-        // the snapshot up — `refreshIfStale` coalesces repeated opens.
+        // the snapshots up — both `refreshIfStale` calls coalesce repeated opens.
         .onAppear {
-            guard status.isPolling else { return }
-            Task { await status.refreshIfStale() }
+            if status.isPolling {
+                Task { await status.refreshIfStale() }
+            }
+            if settings.tokenUsageEnabled {
+                Task { await tokens.refreshIfStale() }
+            }
+            surfaceIncidentIfNeeded()
         }
+    }
+
+    // MARK: - Tabbed panel
+
+    /// Tokens first: it moves every session. Service status only earns a slot
+    /// when the user has polling on at all.
+    private var availableTabs: [PopoverTab] {
+        var tabs: [PopoverTab] = []
+        if settings.tokenUsageEnabled { tabs.append(.tokens) }
+        if status.isPolling { tabs.append(.status) }
+        return tabs
+    }
+
+    private var selectedTab: PopoverTab {
+        let stored = PopoverTab(rawValue: storedTab) ?? .tokens
+        return availableTabs.contains(stored) ? stored : (availableTabs.first ?? .tokens)
+    }
+
+    private var tabSelection: Binding<PopoverTab> {
+        Binding(get: { selectedTab }, set: { storedTab = $0.rawValue })
+    }
+
+    @ViewBuilder
+    private var panel: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if availableTabs.count > 1 {
+                PopoverTabStrip(tabs: availableTabs, selection: tabSelection, badge: badge(for:))
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+            }
+
+            Group {
+                switch selectedTab {
+                case .tokens:
+                    TokenUsageView(monitor: tokens)
+                case .status:
+                    ServiceStatusView(monitor: status)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .transition(.opacity)
+            .id(selectedTab)
+        }
+        // The panels sit side by side conceptually, so a horizontal flick
+        // moves between them the way the tab strip does.
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 18)
+                .onEnded { value in
+                    guard availableTabs.count > 1,
+                          abs(value.translation.width) > abs(value.translation.height) else { return }
+                    step(by: value.translation.width < 0 ? 1 : -1)
+                }
+        )
+    }
+
+    private func step(by delta: Int) {
+        guard let index = availableTabs.firstIndex(of: selectedTab) else { return }
+        let next = index + delta
+        guard availableTabs.indices.contains(next) else { return }
+        withAnimation(.easeInOut(duration: 0.18)) { storedTab = availableTabs[next].rawValue }
+    }
+
+    /// A dot on the SERVICE tab whenever the status page isn't all-green —
+    /// the whole point of demoting the panel is that you shouldn't have to
+    /// go looking, so the tab has to come find you.
+    private func badge(for tab: PopoverTab) -> Color? {
+        guard tab == .status, let level = status.status?.worstLevel, !level.isHealthy else { return nil }
+        return Theme.color(for: level)
+    }
+
+    /// Pop the status panel to the front when something is actually wrong.
+    /// Only on open, and only for a live problem — otherwise the user's own
+    /// choice of tab wins.
+    private func surfaceIncidentIfNeeded() {
+        guard availableTabs.contains(.status),
+              let level = status.status?.worstLevel, !level.isHealthy else { return }
+        storedTab = PopoverTab.status.rawValue
     }
 
     private var header: some View {
@@ -164,6 +251,9 @@ struct PopoverView: View {
                 Task { await daemon.refreshNow() }
                 if status.isPolling {
                     Task { await status.refreshNow() }
+                }
+                if settings.tokenUsageEnabled {
+                    Task { await tokens.refreshNow() }
                 }
             }
             .keyboardShortcut("r")

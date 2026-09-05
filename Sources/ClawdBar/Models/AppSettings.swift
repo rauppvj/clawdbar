@@ -22,6 +22,7 @@ enum AppSettingsDefaults {
     static let apiBaseURL: String = "https://api.anthropic.com"
     static let apiModel: String = "claude-haiku-4-5-20251001"
     static let serviceStatusEnabled: Bool = true
+    static let tokenUsageEnabled: Bool = true
 }
 
 enum MenuBarStyle: String, CaseIterable, Identifiable, Sendable {
@@ -123,6 +124,14 @@ final class AppSettings {
         didSet { defaults.set(serviceStatusEnabled, forKey: Key.serviceStatusEnabled) }
     }
 
+    // MARK: - Token spend
+    /// Whether ClawdBar reads Claude Code's local transcripts to chart daily
+    /// token spend. Off means the tab disappears and nothing under
+    /// ~/.claude/projects is ever opened.
+    var tokenUsageEnabled: Bool {
+        didSet { defaults.set(tokenUsageEnabled, forKey: Key.tokenUsageEnabled) }
+    }
+
     // MARK: - Onboarding
     var onboardingDone: Bool {
         didSet { defaults.set(onboardingDone, forKey: Key.onboardingDone) }
@@ -151,6 +160,7 @@ final class AppSettings {
         self.apiBaseURL = defaults.string(forKey: Key.apiBaseURL) ?? AppSettingsDefaults.apiBaseURL
         self.apiModel = defaults.string(forKey: Key.apiModel) ?? AppSettingsDefaults.apiModel
         self.serviceStatusEnabled = (defaults.object(forKey: Key.serviceStatusEnabled) as? Bool) ?? AppSettingsDefaults.serviceStatusEnabled
+        self.tokenUsageEnabled = (defaults.object(forKey: Key.tokenUsageEnabled) as? Bool) ?? AppSettingsDefaults.tokenUsageEnabled
         self.onboardingDone = defaults.bool(forKey: Key.onboardingDone)
     }
 
@@ -173,6 +183,7 @@ final class AppSettings {
         static let apiBaseURL           = "clawdbar.api.baseURL"
         static let apiModel             = "clawdbar.api.model"
         static let serviceStatusEnabled = "clawdbar.serviceStatus.enabled"
+        static let tokenUsageEnabled    = "clawdbar.tokenUsage.enabled"
         static let onboardingDone       = "clawdbar.onboarding.done"
     }
 }
