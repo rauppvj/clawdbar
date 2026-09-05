@@ -13,6 +13,8 @@ enum ProbeCommand {
         print("")
         printSavedCredential()
         print("")
+        printAccountProfile()
+        print("")
 
         do {
             let cred = try store.load()
@@ -53,6 +55,25 @@ enum ProbeCommand {
             print("Unexpected error: \(error)")
             return 1
         }
+    }
+
+    /// Reports what Claude Code records about the account. This is where the
+    /// plan pill gets its text; the token claims below are only the fallback,
+    /// and the two routinely disagree.
+    private static func printAccountProfile() {
+        let store = AccountProfileStore()
+        print("Account profile")
+        print("---------------")
+        print("File             : \(store.fileURL.path)")
+        guard let profile = store.load() else {
+            print("Result           : not readable — the plan pill will use the token claims")
+            return
+        }
+        print("organizationType : \(profile.organizationType ?? "missing")")
+        print("org tier         : \(profile.organizationRateLimitTier ?? "missing")")
+        print("user tier        : \(profile.userRateLimitTier ?? "missing")")
+        print("seat tier        : \(profile.seatTier ?? "missing")")
+        print("Plan pill        : \(PlanBadge.label(subscriptionType: profile.organizationType, rateLimitTier: profile.tier) ?? "hidden")")
     }
 
     /// Reports ClawdBar's own keychain item — the copy that keeps the app from

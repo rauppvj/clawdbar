@@ -21,6 +21,16 @@ final class PlanBadgeTests: XCTestCase {
         XCTAssertEqual(PlanBadge.label(subscriptionType: "max", rateLimitTier: nil), "MAX")
     }
 
+    func testAcceptsTheClaudeJsonVocabulary() {
+        // ~/.claude.json spells the family "claude_max" where the token claim
+        // says "max". Both have to land on the same pill.
+        XCTAssertEqual(PlanBadge.label(subscriptionType: "claude_max", rateLimitTier: "default_claude_max_5x"), "MAX 5×")
+        XCTAssertEqual(PlanBadge.label(subscriptionType: "claude_max", rateLimitTier: "default_claude_max_20x"), "MAX 20×")
+        XCTAssertEqual(PlanBadge.label(subscriptionType: "claude_max", rateLimitTier: nil), "MAX")
+        XCTAssertEqual(PlanBadge.label(subscriptionType: "claude_pro", rateLimitTier: "default_claude_ai"), "PRO")
+        XCTAssertEqual(PlanBadge.label(subscriptionType: "claude_team", rateLimitTier: nil), "TEAM")
+    }
+
     func testMaxTierAloneIsEnough() {
         // Seen in the wild: subscriptionType lags behind the tier id.
         XCTAssertEqual(PlanBadge.label(subscriptionType: "pro", rateLimitTier: "default_claude_max_5x"), "MAX 5×")
