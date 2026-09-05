@@ -33,15 +33,16 @@ enum TokenProbeCommand {
         print(String(format: "Scanned %d transcript files in %.2fs", summary.filesSeen, elapsed))
         print("Days with data: \(summary.days.count)")
         print("")
-        print("DAY              TOTAL     INPUT    OUTPUT   CACHE W   CACHE R     TURNS")
+        print("DAY              FRESH     INPUT    OUTPUT   CACHE W   CACHE R     TOTAL     TURNS")
         for day in summary.window(days: 14) {
             let counts = day.totals
             let columns = [
-                TokenUsageFormat.compact(counts.total),
+                TokenUsageFormat.compact(counts.fresh),
                 TokenUsageFormat.compact(counts.input),
                 TokenUsageFormat.compact(counts.output),
                 TokenUsageFormat.compact(counts.cacheCreation),
                 TokenUsageFormat.compact(counts.cacheRead),
+                TokenUsageFormat.compact(counts.total),
                 "\(day.messages)",
             ]
             .map { pad($0, to: 10) }
@@ -51,12 +52,13 @@ enum TokenProbeCommand {
         print("")
         for range in [1, 7, 30] {
             let counts = summary.total(lastDays: range)
-            print("Last \(range) day\(range == 1 ? "" : "s"): \(TokenUsageFormat.exact(counts.total)) tokens across \(summary.messages(lastDays: range)) turns")
+            print("Last \(range) day\(range == 1 ? "" : "s"): \(TokenUsageFormat.exact(counts.fresh)) produced/sent, "
+                + "\(TokenUsageFormat.exact(counts.cacheRead)) replayed from cache, across \(summary.messages(lastDays: range)) turns")
         }
         print("")
         print("By model (30 days)")
         for entry in summary.modelBreakdown(lastDays: 30) {
-            print("  \(entry.displayName.padding(toLength: 14, withPad: " ", startingAt: 0)) \(TokenUsageFormat.exact(entry.counts.total))")
+            print("  \(entry.displayName.padding(toLength: 14, withPad: " ", startingAt: 0)) \(TokenUsageFormat.exact(entry.counts.fresh)) (+\(TokenUsageFormat.exact(entry.counts.cacheRead)) cached)")
         }
         return 0
     }
