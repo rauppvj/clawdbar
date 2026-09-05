@@ -5,6 +5,36 @@ where the project is headed.
 
 ## Recently shipped
 
+### Daily token spend — landed 2026-09-05
+
+The popover grew a tab bar. **TOKENS** leads: today's spend as a headline, a
+7-day or 30-day bar chart under it, and a per-model breakdown — read out of the
+transcripts Claude Code already writes to `~/.claude/projects`, so it costs no
+API call and no network. **SERVICE** keeps the status panel, which is green
+almost every day; it badges itself and steals focus when it isn't.
+
+The scan is incremental (per-file size/mtime/byte cursor) and de-duplicates the
+turns that resumed sessions replay — about half of all usage records on a busy
+machine — so a refresh is a stat per transcript once the first pass is done.
+Cache at `~/.clawdbar/tokens.json`, retention 90 days.
+
+Still open here: the floating overlay has no token page yet — the carousel is
+generic over exactly five slots, so adding a sixth is a small refactor. Cost
+estimates in dollars are deliberately absent: subscription usage isn't billed
+per token, so a dollar figure would be fiction.
+
+### Plan pill reads the account, not the token — landed 2026-09-05
+
+The pill said `PRO` on a Max 5× account. The cause wasn't staleness in
+ClawdBar's copy: the OAuth token itself claims `subscriptionType: pro` /
+`rateLimitTier: default_claude_ai`, and a token *refresh* keeps whatever the
+login minted — so re-running `claude /login` was the only fix, and the API
+sends no plan header to cross-check against.
+
+`~/.claude.json` does carry the live answer (`oauthAccount.organizationType`,
+`organizationRateLimitTier`), so that is now the primary source, with the token
+claims kept as a fallback for setups where the file isn't there.
+
 ### Saved credential — landed 2026-09-04
 
 macOS kept asking for the login password because ClawdBar read a keychain item

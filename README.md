@@ -98,6 +98,12 @@ The 5 h + 7 d unified rate-limit system is the same across every Claude Code pla
 - **Claude Max** — both 5× and 20× tiers; the popover header surfaces which
 - **Claude Team** — also supported (limits per seat)
 
+The plan pill reads `oauthAccount` from `~/.claude.json`, which Claude Code
+keeps current. It falls back to the claims baked into the OAuth token, but only
+as a last resort: those are minted at login and are **not** rewritten when the
+token refreshes, so on an upgraded account they can keep saying `pro`
+indefinitely.
+
 **Not yet supported:** Anthropic API direct (api keys from console.anthropic.com). That uses a different auth scheme (`x-api-key`) and a different rate-limit header family — see [CONTRIBUTING.md](./CONTRIBUTING.md) for the roadmap.
 
 ## How it works
@@ -117,9 +123,31 @@ anthropic-ratelimit-unified-7d-utilization
 anthropic-ratelimit-unified-7d-reset
 ```
 
+### Daily token spend
+
+The popover's **TOKENS** tab charts how many tokens you actually spent per day,
+broken down by model — today's total, then the last 7 or 30 days as a bar chart.
+
+It comes entirely from files Claude Code already wrote: the session transcripts
+under `~/.claude/projects/**/*.jsonl`, whose assistant turns each carry a
+`message.usage` block. ClawdBar rolls those up per local calendar day. Nothing
+is uploaded, no extra API call is made, and the scan is incremental — each
+transcript is remembered by (size, mtime, byte offset), so a refresh after the
+first one only reads the bytes that were appended. Turns replayed by resumed or
+forked sessions are de-duplicated by message + request id, which matters: they
+are roughly half of all records on a busy machine.
+
+Totals include cache reads, which dominate agentic work — the tooltip on any
+bar breaks out input / output / cache write / cache read. Turn the whole thing
+off in **Preferences → Data Source → Token spend** and ClawdBar never opens
+`~/.claude/projects`.
+
 ### Service status
 
-Separately, every 2 minutes ClawdBar GETs `status.claude.com/api/v2/summary.json`
+Service status now lives behind the popover's second tab, since it is green
+almost all the time — but the tab carries a coloured dot the moment the status
+page reports anything else, and the popover opens straight to it during a live
+incident. Every 2 minutes ClawdBar GETs `status.claude.com/api/v2/summary.json`
 — the same public document the status page itself renders — and shows the
 overall indicator, a dot per component (claude.ai, API, Claude Code, Console,
 Cowork, Gov) and any unresolved incident. It appears in the popover and as the
@@ -166,6 +194,11 @@ no reason to ask for anything.
   status page — unauthenticated, read-only, and switchable off in Preferences.
 - No telemetry, no analytics, no crash reporting.
 - Local usage history lives at `~/.clawdbar/history.jsonl`.
+- Token spend is read from Claude Code's own transcripts under
+  `~/.claude/projects` and cached — daily totals only, no prompt or response
+  text — at `~/.clawdbar/tokens.json`. It never leaves the machine.
+- The plan pill reads `oauthAccount` out of `~/.claude.json`; no other part of
+  that file is parsed and nothing in it is sent anywhere.
 - iCloud sync of any usage data is explicitly out of scope.
 
 Don't take our word for it — audit instructions live in [CONTRIBUTING.md](./CONTRIBUTING.md#auditing-the-codebase). Four shell commands enumerate every dependency, network endpoint, and bundled asset.
@@ -178,6 +211,8 @@ The same binary exposes non-UI commands for debugging:
 ClawdBar --probe-credentials   # inspect keychain credentials (shape only)
 ClawdBar --probe-api           # spend 1 Haiku token, dump anthropic-* headers
 ClawdBar --probe-status        # dump status.claude.com components + incidents
+ClawdBar --probe-tokens        # roll up ~/.claude/projects into daily token totals
+ClawdBar --render-tokens f.png # render the token panel to a PNG
 ClawdBar --reset-onboarding    # wipe UserDefaults
 ClawdBar --forget-credential   # delete ClawdBar's own saved credential
 ```
