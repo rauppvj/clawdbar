@@ -50,6 +50,7 @@ final class UsageDaemon {
     private var cachedCredentials: Credentials?
     private let profileStore: AccountProfileLoading
     private var profileModifiedAt: Date?
+    private var hasCheckedProfile = false
     private var vaultAvailable = true
     let history: UsageHistoryStore
 
@@ -175,16 +176,28 @@ final class UsageDaemon {
         }
     }
 
-    /// Re-parses ~/.claude.json only when its mtime changed — the file is a
+    /// Re-parses ~/.claude.json only when its mtime has moved — the file is a
     /// few hundred KB of unrelated Claude Code state and this runs on every
-    /// poll.
+    /// poll. The `hasCheckedProfile` flag is what makes the *first* look
+    /// happen: on a machine with no such file both mtimes are nil, and gating
+    /// on them alone would either skip forever or re-parse forever.
+    ///
+    /// A plan change rewrites this file without any token being re-issued, so
+    /// this is the path that keeps the pill honest when the user upgrades.
     private func refreshAccountProfile() {
         let modified = profileStore.modifiedAt()
-        if accountProfile != nil, modified == profileModifiedAt { return }
+        if hasCheckedProfile, modified == profileModifiedAt { return }
+        hasCheckedProfile = true
         profileModifiedAt = modified
-        if let profile = profileStore.load() {
-            accountProfile = profile
+
+        let loaded = profileStore.load()
+        if loaded != nil || modified != nil {
+            // A readable file that no longer names an account means a sign-out.
+            // Fall back to the token claims rather than pinning a stale plan.
+            accountProfile = loaded
         }
+        // File gone entirely (moved home, deleted): keep what we had — the
+        // account didn't change, our view of the disk did.
     }
 
     private var effectiveInterval: TimeInterval {
