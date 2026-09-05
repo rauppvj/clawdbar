@@ -142,9 +142,13 @@ the tokens your machine actually produced or sent. Cache reads are named
 separately (`+25M CACHED`) rather than folded in, because on agentic work they
 run **97–99 % of the raw total**: every turn replays a context that was paid
 for once when it was written. Lead with the raw total and an ordinary day reads
-as tens of millions of tokens, which is true and tells you nothing. The tooltip
-on the headline, on any bar, and on the range line spells out all four counters,
-the all-in total, and the per-model split.
+as tens of millions of tokens, which is true and tells you nothing.
+
+Hovering any bar swaps the line under the chart for that day —
+`AUG 31 · 5.4M · 1504 TURNS · +582M CACHED` — instantly and in the app's own
+type. That readout replaced `.help()` tooltips, which macOS fixes at a ~2 s
+delay and paints in the system's light chrome regardless of what the app looks
+like. The full per-model split lives in `--probe-tokens`.
 
 Turn the whole thing off in **Preferences → Data Source → Token spend** and
 ClawdBar never opens `~/.claude/projects`.

@@ -22,6 +22,17 @@ struct TokenUsageView: View {
         Range(rawValue: storedRange) ?? .week
     }
 
+    /// The bar (or the headline) the pointer is over. Drives the readout line
+    /// under the chart — see `readout` for why this replaced `.help()`.
+    @State private var hovered: Date?
+
+    init(monitor: TokenUsageMonitor, previewHover: Date? = nil) {
+        self.monitor = monitor
+        // `--render-tokens` seeds this so the hover state can be reviewed in a
+        // PNG. A pointer is the one thing an ImageRenderer cannot supply.
+        _hovered = State(initialValue: previewHover)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             headline
@@ -29,7 +40,7 @@ struct TokenUsageView: View {
                 emptyState
             } else {
                 chart
-                rangeCaption
+                readout
             }
         }
     }
@@ -74,10 +85,8 @@ struct TokenUsageView: View {
                     .lineLimit(1)
             }
         }
-        // On the whole block, not just the number — the hover target for
-        // "give me the exact figure" should be the thing you're looking at.
         .contentShape(Rectangle())
-        .help(exactTooltip(today))
+        .onHover { inside in hover(today.day, inside) }
     }
 
     /// Cache reads run 97–99 % of the raw total on agentic work: every turn
@@ -176,36 +185,101 @@ struct TokenUsageView: View {
         // an idle day is visibly different from a missing one.
         let fraction = Double(day.totals.fresh) / Double(peak)
         let height = day.totals.fresh == 0 ? 2 : max(3, 44 * fraction)
-        return RoundedRectangle(cornerRadius: 2, style: .continuous)
-            .fill(barColor(for: day))
-            .frame(height: height)
-            .frame(maxWidth: .infinity, alignment: .bottom)
-            .help(exactTooltip(day))
+        return VStack(spacing: 0) {
+            Spacer(minLength: 0)
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(barColor(for: day))
+                .frame(height: height)
+        }
+        // The hover target is the whole column, not the drawn bar: on a quiet
+        // day that bar is a 3 pt sliver and would be nearly unhittable.
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .onHover { inside in hover(day.day, inside) }
+    }
+
+    private func hover(_ day: Date, _ inside: Bool) {
+        if inside {
+            hovered = day
+        } else if hovered == day {
+            hovered = nil
+        }
     }
 
     private func barColor(for day: DailyTokenUsage) -> Color {
-        if day.totals.fresh == 0 { return Theme.bgRaised }
-        return isToday(day) ? Theme.accentWarm : Theme.accentCool.opacity(0.75)
+        let isHovered = hovered == day.day
+        if day.totals.fresh == 0 {
+            return isHovered ? Theme.textMuted.opacity(0.45) : Theme.bgRaised
+        }
+        if isToday(day) { return Theme.accentWarm }
+        return Theme.accentCool.opacity(isHovered ? 1 : 0.7)
     }
 
     // MARK: - Range summary + models
 
-    private var rangeCaption: some View {
+    /// One line under the chart, and the only place exact figures live.
+    ///
+    /// This used to be `.help()` tooltips. They were the wrong tool three ways
+    /// over: macOS fixes the delay at ~2 s, paints them in the system's light
+    /// chrome no matter what the app looks like, and gives no control over
+    /// layout — so a four-line breakdown arrived as a white slab bolted onto a
+    /// black pixel-art popover. A readout that swaps in place is instant, uses
+    /// the app's own type, and can't be styled by anyone but us.
+    private var readout: some View {
+        Group {
+            if let day = hoveredDay {
+                Text(dayReadout(day))
+                    .foregroundStyle(Theme.textPrimary)
+            } else {
+                rangeReadout
+            }
+        }
+        .font(Theme.retro(size: 9))
+        .lineLimit(1)
+        .minimumScaleFactor(0.6)
+        // Pinned height: the two branches build different view trees and
+        // measured 2 pt apart, which would bounce the whole popover every time
+        // the pointer crossed a bar.
+        .frame(maxWidth: .infinity, minHeight: 15, maxHeight: 15, alignment: .leading)
+        .animation(.easeInOut(duration: 0.12), value: hovered)
+    }
+
+    private var hoveredDay: DailyTokenUsage? {
+        guard let hovered else { return nil }
+        return window.first { $0.day == hovered }
+    }
+
+    /// "31 AUG · 5.4M · 1504 TURNS · +582M CACHED"
+    private func dayReadout(_ day: DailyTokenUsage) -> String {
+        let counts = day.totals
+        var parts = [TokenUsageFormat.monthDay(day.day)]
+        guard !counts.isEmpty else {
+            parts.append("IDLE")
+            return parts.joined(separator: "  ·  ")
+        }
+        parts.append(TokenUsageFormat.compact(counts.fresh))
+        if day.messages > 0 {
+            parts.append("\(day.messages) TURN\(day.messages == 1 ? "" : "S")")
+        }
+        if counts.cacheRead > 0 {
+            parts.append("+\(TokenUsageFormat.compact(counts.cacheRead)) CACHED")
+        }
+        return parts.joined(separator: "  ·  ")
+    }
+
+    private var rangeReadout: some View {
         let total = monitor.summary.total(lastDays: range.days)
         let average = total.fresh / max(range.days, 1)
         return HStack(spacing: 6) {
             Text("\(range.label) \(TokenUsageFormat.compact(total.fresh))")
-                .font(Theme.retro(size: 9, weight: .bold))
+                .fontWeight(.bold)
                 .foregroundStyle(Theme.textPrimary)
             Text("·")
-                .font(Theme.retro(size: 9))
                 .foregroundStyle(Theme.textMuted)
             Text("AVG \(TokenUsageFormat.compact(average))/DAY")
-                .font(Theme.retro(size: 9))
                 .foregroundStyle(Theme.textSecondary)
             Spacer(minLength: 0)
         }
-        .help(rangeTooltip(total))
     }
 
     // MARK: - Empty state
@@ -224,34 +298,6 @@ struct TokenUsageView: View {
 
     // MARK: - Helpers
 
-    /// The per-model split used to have its own rows. It answered a question
-    /// nobody was asking of a menu-bar popover — one model is ~100 % of the
-    /// total for most people — so it moved into the hover text rather than
-    /// being thrown away.
-    private func rangeTooltip(_ total: TokenCounts) -> String {
-        var lines = [
-            "Last \(range.days) days — \(TokenUsageFormat.exact(total.fresh)) tokens produced or sent:",
-            "  input \(TokenUsageFormat.exact(total.input))",
-            "  output \(TokenUsageFormat.exact(total.output))",
-            "  cache writes \(TokenUsageFormat.exact(total.cacheCreation))",
-            "",
-            "Plus \(TokenUsageFormat.exact(total.cacheRead)) cache reads — context replayed on every",
-            "turn, paid for once when it was written. Counted apart because it",
-            "swamps everything else (\(TokenUsageFormat.exact(total.total)) all in).",
-        ]
-        let models = monitor.summary.modelBreakdown(lastDays: range.days)
-        if !models.isEmpty {
-            lines.append("")
-            let grand = max(models.reduce(0) { $0 + $1.counts.total }, 1)
-            for entry in models.prefix(5) {
-                let share = Double(entry.counts.total) / Double(grand) * 100
-                let percent = share > 0 && share < 0.5 ? "<1%" : "\(Int(share.rounded()))%"
-                lines.append("\(entry.displayName): \(TokenUsageFormat.exact(entry.counts.total)) (\(percent))")
-            }
-        }
-        return lines.joined(separator: "\n")
-    }
-
     private func midpoint(of series: [DailyTokenUsage]) -> Date? {
         let index = series.count / 2
         return series.indices.contains(index) ? series[index].day : nil
@@ -267,26 +313,6 @@ struct TokenUsageView: View {
 
     private func isToday(_ day: DailyTokenUsage) -> Bool {
         Calendar.current.isDateInToday(day.day)
-    }
-
-    private func exactTooltip(_ day: DailyTokenUsage) -> String {
-        let counts = day.totals
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        guard !counts.isEmpty else {
-            return "\(formatter.string(from: day.day)) — no tokens"
-        }
-        return """
-            \(formatter.string(from: day.day)) — \(day.messages) turn\(day.messages == 1 ? "" : "s")
-
-            \(TokenUsageFormat.exact(counts.fresh)) tokens produced or sent
-              input \(TokenUsageFormat.exact(counts.input))
-              output \(TokenUsageFormat.exact(counts.output))
-              cache writes \(TokenUsageFormat.exact(counts.cacheCreation))
-
-            \(TokenUsageFormat.exact(counts.cacheRead)) cache reads — context replayed each turn,
-            paid for once when it was written. \(TokenUsageFormat.exact(counts.total)) all in.
-            """
     }
 
     private func shortAge(_ age: TimeInterval) -> String {
