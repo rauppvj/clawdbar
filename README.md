@@ -133,22 +133,36 @@ under `~/.claude/projects/**/*.jsonl`, whose assistant turns each carry a
 `message.usage` block. ClawdBar rolls those up per local calendar day. Nothing
 is uploaded, no extra API call is made, and the scan is incremental — each
 transcript is remembered by (size, mtime, byte offset), so a refresh after the
-first one only reads the bytes that were appended. Turns replayed by resumed or
-forked sessions are de-duplicated by message + request id, which matters: they
-are roughly half of all records on a busy machine.
+first one only reads the bytes that were appended. Records are de-duplicated by
+message + request id, which matters a lot — see below.
 
-**What the number counts.** The headline is input + output + cache writes —
-the tokens your machine actually produced or sent. Cache reads are named
-separately (`+25M CACHED`) rather than folded in, because on agentic work they
-run **97–99 % of the raw total**: every turn replays a context that was paid
-for once when it was written. Lead with the raw total and an ordinary day reads
-as tens of millions of tokens, which is true and tells you nothing.
+**What the number counts.** The headline is input + output, the same two
+counters claude.ai's own usage chart plots. The two cache counters sit beside
+it rather than folded in (`+4.3M CACHED · +360M REPLAYED`): what got written
+into the prompt cache, and what got replayed out of it. That split is not
+cosmetic — cache reads run **97–99 % of everything the requests moved**,
+because every turn replays a context that was paid for once when it was
+written. Lead with that and an ordinary day reads as hundreds of millions of
+tokens, which is true and tells you nothing.
+
+**Why it disagrees with claude.ai.** It does, by about 2×, and the readout says
+so instead of leaving you to find out. Claude Code writes one JSONL line per
+content block of a response — `thinking`, `text`, `tool_use` — and every one of
+those lines repeats the response's single `usage` block. Resumed and forked
+sessions then replay them into the new transcript. claude.ai's chart adds up
+every record; on the machine this was measured on that is 32,719 records for
+17,223 real API calls, and its per-model figures match the naive sum to the
+token (Opus 4.8: 760 input / 296,159 output locally, `760 entrada · 296,2k
+saída` on the site). So ClawdBar counts each response once — that is what was
+really generated — and carries the undeduplicated tally alongside it purely so
+the two can be compared.
 
 Hovering any bar swaps the line under the chart for that day —
-`AUG 31 · 5.4M · 1504 TURNS · +582M CACHED` — instantly and in the app's own
+`SEP 4 · 1.2M · 1464 TURNS · 2.9M ON CLAUDE.AI` — instantly and in the app's own
 type. That readout replaced `.help()` tooltips, which macOS fixes at a ~2 s
 delay and paints in the system's light chrome regardless of what the app looks
-like. The full per-model split lives in `--probe-tokens`.
+like. All four counters, both tallies and the per-model split live in
+`--probe-tokens`.
 
 Turn the whole thing off in **Preferences → Data Source → Token spend** and
 ClawdBar never opens `~/.claude/projects`.

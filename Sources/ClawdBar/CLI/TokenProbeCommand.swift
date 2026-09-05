@@ -33,17 +33,18 @@ enum TokenProbeCommand {
         print(String(format: "Scanned %d transcript files in %.2fs", summary.filesSeen, elapsed))
         print("Days with data: \(summary.days.count)")
         print("")
-        print("DAY              FRESH     INPUT    OUTPUT   CACHE W   CACHE R     TOTAL     TURNS")
+        print("DAY             IN+OUT     INPUT    OUTPUT   CACHE W   CACHE R     FRESH     TURNS  CLAUDE.AI")
         for day in summary.window(days: 14) {
             let counts = day.totals
             let columns = [
-                TokenUsageFormat.compact(counts.fresh),
+                TokenUsageFormat.compact(counts.uncached),
                 TokenUsageFormat.compact(counts.input),
                 TokenUsageFormat.compact(counts.output),
                 TokenUsageFormat.compact(counts.cacheCreation),
                 TokenUsageFormat.compact(counts.cacheRead),
-                TokenUsageFormat.compact(counts.total),
+                TokenUsageFormat.compact(counts.fresh),
                 "\(day.messages)",
+                TokenUsageFormat.compact(day.rawTotals.uncached),
             ]
             .map { pad($0, to: 10) }
             .joined()
@@ -52,13 +53,27 @@ enum TokenProbeCommand {
         print("")
         for range in [1, 7, 30] {
             let counts = summary.total(lastDays: range)
-            print("Last \(range) day\(range == 1 ? "" : "s"): \(TokenUsageFormat.exact(counts.fresh)) produced/sent, "
-                + "\(TokenUsageFormat.exact(counts.cacheRead)) replayed from cache, across \(summary.messages(lastDays: range)) turns")
+            print("Last \(range) day\(range == 1 ? "" : "s"): \(TokenUsageFormat.exact(counts.uncached)) in+out, "
+                + "\(TokenUsageFormat.exact(counts.cacheCreation)) written to cache, "
+                + "\(TokenUsageFormat.exact(counts.cacheRead)) replayed, across \(summary.messages(lastDays: range)) turns")
+        }
+        print("")
+        // The website counts every transcript record, not every API call — see
+        // TokenUsageScanner. Printing both is the fastest way to check that the
+        // gap is still the one we think it is and not a scanning bug.
+        print("claude.ai equivalent (every record, in+out only)")
+        for range in [1, 7, 30] {
+            let mine = summary.total(lastDays: range).uncached
+            let theirs = summary.rawTotal(lastDays: range).uncached
+            let ratio = mine == 0 ? 0 : Double(theirs) / Double(mine)
+            print(String(format: "  Last %d day%@: %@ vs %@ here (%.2f×)",
+                         range, range == 1 ? "" : "s",
+                         TokenUsageFormat.exact(theirs), TokenUsageFormat.exact(mine), ratio))
         }
         print("")
         print("By model (30 days)")
         for entry in summary.modelBreakdown(lastDays: 30) {
-            print("  \(entry.displayName.padding(toLength: 14, withPad: " ", startingAt: 0)) \(TokenUsageFormat.exact(entry.counts.fresh)) (+\(TokenUsageFormat.exact(entry.counts.cacheRead)) cached)")
+            print("  \(entry.displayName.padding(toLength: 14, withPad: " ", startingAt: 0)) \(TokenUsageFormat.exact(entry.counts.uncached)) in+out (+\(TokenUsageFormat.exact(entry.counts.cacheCreation)) written, \(TokenUsageFormat.exact(entry.counts.cacheRead)) replayed)")
         }
         return 0
     }

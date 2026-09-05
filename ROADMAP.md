@@ -26,9 +26,11 @@ bar the pointer is over, rather than from `.help()`. macOS tooltips have a fixed
 ~2 s delay and system light chrome, which reads as a white slab bolted onto a
 black pixel-art popover.
 
-The scan is incremental (per-file size/mtime/byte cursor) and de-duplicates the
-turns that resumed sessions replay — about half of all usage records on a busy
-machine — so a refresh is a stat per transcript once the first pass is done.
+The scan is incremental (per-file size/mtime/byte cursor) and de-duplicates by
+(message id, request id) — about half of all usage records are extra lines for
+the same response, one per content block — so a refresh is a stat per
+transcript once the first pass is done. The undeduplicated tally is kept too,
+because that is what claude.ai's own chart plots and the readout shows both.
 Cache at `~/.clawdbar/tokens.json`, retention 90 days.
 
 Still open here: the floating overlay has no token page yet — the carousel is

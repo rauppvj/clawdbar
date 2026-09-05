@@ -61,7 +61,7 @@ struct TokenUsageView: View {
                 rangePicker
             }
             HStack(alignment: .firstTextBaseline, spacing: 7) {
-                Text(TokenUsageFormat.compact(today.totals.fresh))
+                Text(TokenUsageFormat.compact(today.totals.uncached))
                     .font(Theme.retro(size: 26, weight: .heavy))
                     .foregroundStyle(Theme.accentWarm)
                     .monospacedDigit()
@@ -83,6 +83,7 @@ struct TokenUsageView: View {
                     .tracking(1)
                     .foregroundStyle(Theme.textMuted)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.7)
             }
         }
         .contentShape(Rectangle())
@@ -92,16 +93,21 @@ struct TokenUsageView: View {
     /// Cache reads run 97–99 % of the raw total on agentic work: every turn
     /// replays a context that was paid for once. Leading with that number
     /// makes an ordinary day read as tens of millions of tokens, which is
-    /// true and useless. So the headline counts what this machine actually
-    /// produced or sent, and the replay is named separately rather than
-    /// hidden — it is still what fills the rate-limit window.
+    /// true and useless. So the headline is input + output — the same two
+    /// counters claude.ai's chart plots — and the two cache counters are
+    /// named beside it rather than hidden: what got written into the cache,
+    /// and what got replayed out of it. Between the three, all four counters
+    /// stay on screen and nothing is silently folded into the big number.
     private var turnsCaption: String {
         var parts: [String] = []
         if today.messages > 0 {
             parts.append("\(today.messages) TURN\(today.messages == 1 ? "" : "S")")
         }
+        if today.totals.cacheCreation > 0 {
+            parts.append("+\(TokenUsageFormat.compact(today.totals.cacheCreation)) CACHED")
+        }
         if today.totals.cacheRead > 0 {
-            parts.append("+\(TokenUsageFormat.compact(today.totals.cacheRead)) CACHED")
+            parts.append("+\(TokenUsageFormat.compact(today.totals.cacheRead)) REPLAYED")
         }
         return parts.joined(separator: "  ·  ")
     }
@@ -131,7 +137,7 @@ struct TokenUsageView: View {
 
     private var chart: some View {
         let series = window
-        let peak = max(series.map(\.totals.fresh).max() ?? 0, 1)
+        let peak = max(series.map(\.totals.uncached).max() ?? 0, 1)
 
         return VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .bottom, spacing: barSpacing) {
@@ -183,8 +189,8 @@ struct TokenUsageView: View {
     private func bar(for day: DailyTokenUsage, peak: Int) -> some View {
         // Empty days still get a 2 pt stub so the baseline stays readable and
         // an idle day is visibly different from a missing one.
-        let fraction = Double(day.totals.fresh) / Double(peak)
-        let height = day.totals.fresh == 0 ? 2 : max(3, 44 * fraction)
+        let fraction = Double(day.totals.uncached) / Double(peak)
+        let height = day.totals.uncached == 0 ? 2 : max(3, 44 * fraction)
         return VStack(spacing: 0) {
             Spacer(minLength: 0)
             RoundedRectangle(cornerRadius: 2, style: .continuous)
@@ -208,7 +214,7 @@ struct TokenUsageView: View {
 
     private func barColor(for day: DailyTokenUsage) -> Color {
         let isHovered = hovered == day.day
-        if day.totals.fresh == 0 {
+        if day.totals.uncached == 0 {
             return isHovered ? Theme.textMuted.opacity(0.45) : Theme.bgRaised
         }
         if isToday(day) { return Theme.accentWarm }
@@ -249,7 +255,12 @@ struct TokenUsageView: View {
         return window.first { $0.day == hovered }
     }
 
-    /// "31 AUG · 5.4M · 1504 TURNS · +582M CACHED"
+    /// "31 AUG · 1.3M · 1504 TURNS · 2.9M ON CLAUDE.AI"
+    ///
+    /// The trailing figure is the same day as claude.ai's usage chart reports
+    /// it: every transcript record, not every API call. It runs about twice
+    /// the app's own number, and saying so here is cheaper than having the
+    /// user find the gap themselves and conclude the app is broken.
     private func dayReadout(_ day: DailyTokenUsage) -> String {
         let counts = day.totals
         var parts = [TokenUsageFormat.monthDay(day.day)]
@@ -257,27 +268,34 @@ struct TokenUsageView: View {
             parts.append("IDLE")
             return parts.joined(separator: "  ·  ")
         }
-        parts.append(TokenUsageFormat.compact(counts.fresh))
+        parts.append(TokenUsageFormat.compact(counts.uncached))
         if day.messages > 0 {
             parts.append("\(day.messages) TURN\(day.messages == 1 ? "" : "S")")
         }
-        if counts.cacheRead > 0 {
-            parts.append("+\(TokenUsageFormat.compact(counts.cacheRead)) CACHED")
+        if day.rawTotals.uncached > counts.uncached {
+            parts.append("\(TokenUsageFormat.compact(day.rawTotals.uncached)) ON CLAUDE.AI")
         }
         return parts.joined(separator: "  ·  ")
     }
 
     private var rangeReadout: some View {
-        let total = monitor.summary.total(lastDays: range.days)
-        let average = total.fresh / max(range.days, 1)
+        let total = monitor.summary.total(lastDays: range.days).uncached
+        let mirrored = monitor.summary.rawTotal(lastDays: range.days).uncached
+        let average = total / max(range.days, 1)
         return HStack(spacing: 6) {
-            Text("\(range.label) \(TokenUsageFormat.compact(total.fresh))")
+            Text("\(range.label) \(TokenUsageFormat.compact(total))")
                 .fontWeight(.bold)
                 .foregroundStyle(Theme.textPrimary)
             Text("·")
                 .foregroundStyle(Theme.textMuted)
             Text("AVG \(TokenUsageFormat.compact(average))/DAY")
                 .foregroundStyle(Theme.textSecondary)
+            if mirrored > total {
+                Text("·")
+                    .foregroundStyle(Theme.textMuted)
+                Text("\(TokenUsageFormat.compact(mirrored)) ON CLAUDE.AI")
+                    .foregroundStyle(Theme.textMuted)
+            }
             Spacer(minLength: 0)
         }
     }

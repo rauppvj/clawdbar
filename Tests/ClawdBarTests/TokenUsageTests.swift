@@ -52,6 +52,7 @@ final class TokenUsageSummaryTests: XCTestCase {
         let b = TokenCounts(input: 10, output: 20, cacheCreation: 30, cacheRead: 40)
         XCTAssertEqual((a + b).total, 110)
         XCTAssertEqual((a + b).fresh, 66)
+        XCTAssertEqual((a + b).uncached, 33)
         XCTAssertTrue(TokenCounts.zero.isEmpty)
     }
 }
