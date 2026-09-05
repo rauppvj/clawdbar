@@ -105,19 +105,29 @@ struct PopoverView: View {
                     .padding(.top, 10)
             }
 
-            Group {
-                switch selectedTab {
-                case .tokens:
+            // Both panels stay in the layout and only their opacity changes,
+            // so the ZStack is as tall as the taller one and the popover keeps
+            // one height across tab switches instead of jumping. It also grows
+            // on its own when an incident adds rows to the status panel — a
+            // fixed height would clip that. Same trick as OverlayCarousel.
+            ZStack(alignment: .topLeading) {
+                if availableTabs.contains(.tokens) {
                     TokenUsageView(monitor: tokens)
-                case .status:
+                        .opacity(selectedTab == .tokens ? 1 : 0)
+                        .allowsHitTesting(selectedTab == .tokens)
+                        .accessibilityHidden(selectedTab != .tokens)
+                }
+                if availableTabs.contains(.status) {
                     ServiceStatusView(monitor: status)
+                        .opacity(selectedTab == .status ? 1 : 0)
+                        .allowsHitTesting(selectedTab == .status)
+                        .accessibilityHidden(selectedTab != .status)
                 }
             }
+            .animation(.easeInOut(duration: 0.18), value: selectedTab)
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .transition(.opacity)
-            .id(selectedTab)
         }
         // The panels sit side by side conceptually, so a horizontal flick
         // moves between them the way the tab strip does.

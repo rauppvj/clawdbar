@@ -30,7 +30,6 @@ struct TokenUsageView: View {
             } else {
                 chart
                 rangeCaption
-                breakdown
             }
         }
     }
@@ -38,22 +37,25 @@ struct TokenUsageView: View {
     // MARK: - Headline
 
     private var headline: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(TokenUsageFormat.compact(today.totals.total))
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                // The label goes *above* the number, not under it: "23M" on
+                // its own answers nothing, and the first question anyone asks
+                // of this panel is "how much did I spend today".
+                Text("TOKENS TODAY")
+                    .font(Theme.retro(size: 9, weight: .bold))
+                    .tracking(2)
+                    .foregroundStyle(Theme.textSecondary)
+                Spacer(minLength: 0)
+                rangePicker
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 7) {
+                Text(TokenUsageFormat.compact(today.totals.fresh))
                     .font(Theme.retro(size: 26, weight: .heavy))
                     .foregroundStyle(Theme.accentWarm)
                     .monospacedDigit()
                     .contentTransition(.numericText())
-                    .help(exactTooltip(today))
-                Text(todayCaption)
-                    .font(Theme.retro(size: 8))
-                    .tracking(1.5)
-                    .foregroundStyle(Theme.textMuted)
-            }
-            Spacer(minLength: 0)
-            VStack(alignment: .trailing, spacing: 5) {
-                rangePicker
+                Spacer(minLength: 0)
                 if monitor.isScanning {
                     ProgressView().controlSize(.small).tint(Theme.accentWarm)
                 } else if let age = monitor.snapshotAge, monitor.hasScanned {
@@ -62,13 +64,37 @@ struct TokenUsageView: View {
                         .foregroundStyle(Theme.textMuted)
                 }
             }
+            // Its own line: at 26 pt the headline leaves no room to sit a
+            // second phrase beside it without wrapping mid-caption.
+            if !turnsCaption.isEmpty {
+                Text(turnsCaption)
+                    .font(Theme.retro(size: 8))
+                    .tracking(1)
+                    .foregroundStyle(Theme.textMuted)
+                    .lineLimit(1)
+            }
         }
+        // On the whole block, not just the number — the hover target for
+        // "give me the exact figure" should be the thing you're looking at.
+        .contentShape(Rectangle())
+        .help(exactTooltip(today))
     }
 
-    private var todayCaption: String {
-        let turns = today.messages
-        guard turns > 0 else { return "TODAY" }
-        return "TODAY  ·  \(turns) TURN\(turns == 1 ? "" : "S")"
+    /// Cache reads run 97–99 % of the raw total on agentic work: every turn
+    /// replays a context that was paid for once. Leading with that number
+    /// makes an ordinary day read as tens of millions of tokens, which is
+    /// true and useless. So the headline counts what this machine actually
+    /// produced or sent, and the replay is named separately rather than
+    /// hidden — it is still what fills the rate-limit window.
+    private var turnsCaption: String {
+        var parts: [String] = []
+        if today.messages > 0 {
+            parts.append("\(today.messages) TURN\(today.messages == 1 ? "" : "S")")
+        }
+        if today.totals.cacheRead > 0 {
+            parts.append("+\(TokenUsageFormat.compact(today.totals.cacheRead)) CACHED")
+        }
+        return parts.joined(separator: "  ·  ")
     }
 
     private var rangePicker: some View {
@@ -96,7 +122,7 @@ struct TokenUsageView: View {
 
     private var chart: some View {
         let series = window
-        let peak = max(series.map(\.totals.total).max() ?? 0, 1)
+        let peak = max(series.map(\.totals.fresh).max() ?? 0, 1)
 
         return VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .bottom, spacing: barSpacing) {
@@ -148,8 +174,8 @@ struct TokenUsageView: View {
     private func bar(for day: DailyTokenUsage, peak: Int) -> some View {
         // Empty days still get a 2 pt stub so the baseline stays readable and
         // an idle day is visibly different from a missing one.
-        let fraction = Double(day.totals.total) / Double(peak)
-        let height = day.totals.isEmpty ? 2 : max(3, 44 * fraction)
+        let fraction = Double(day.totals.fresh) / Double(peak)
+        let height = day.totals.fresh == 0 ? 2 : max(3, 44 * fraction)
         return RoundedRectangle(cornerRadius: 2, style: .continuous)
             .fill(barColor(for: day))
             .frame(height: height)
@@ -158,7 +184,7 @@ struct TokenUsageView: View {
     }
 
     private func barColor(for day: DailyTokenUsage) -> Color {
-        if day.totals.isEmpty { return Theme.bgRaised }
+        if day.totals.fresh == 0 { return Theme.bgRaised }
         return isToday(day) ? Theme.accentWarm : Theme.accentCool.opacity(0.75)
     }
 
@@ -166,9 +192,9 @@ struct TokenUsageView: View {
 
     private var rangeCaption: some View {
         let total = monitor.summary.total(lastDays: range.days)
-        let average = total.total / max(range.days, 1)
+        let average = total.fresh / max(range.days, 1)
         return HStack(spacing: 6) {
-            Text("\(range.label) \(TokenUsageFormat.compact(total.total))")
+            Text("\(range.label) \(TokenUsageFormat.compact(total.fresh))")
                 .font(Theme.retro(size: 9, weight: .bold))
                 .foregroundStyle(Theme.textPrimary)
             Text("·")
@@ -179,93 +205,7 @@ struct TokenUsageView: View {
                 .foregroundStyle(Theme.textSecondary)
             Spacer(minLength: 0)
         }
-        .help("""
-            \(TokenUsageFormat.exact(total.total)) tokens over the last \(range.days) days.
-            Input \(TokenUsageFormat.exact(total.input)) · output \(TokenUsageFormat.exact(total.output))
-            Cache write \(TokenUsageFormat.exact(total.cacheCreation)) · cache read \(TokenUsageFormat.exact(total.cacheRead))
-            """)
-    }
-
-    @ViewBuilder
-    private var breakdown: some View {
-        let models = monitor.summary.modelBreakdown(lastDays: range.days)
-        if models.isEmpty {
-            Text(monitor.hasScanned ? "NO TOKENS IN THIS RANGE" : "SCANNING TRANSCRIPTS…")
-                .font(Theme.retro(size: 8))
-                .foregroundStyle(Theme.textMuted)
-        } else {
-            let total = max(models.reduce(0) { $0 + $1.counts.total }, 1)
-            VStack(spacing: 5) {
-                ForEach(Array(models.prefix(3).enumerated()), id: \.element.id) { index, entry in
-                    modelRow(entry, share: Double(entry.counts.total) / Double(total), index: index)
-                }
-                if models.count > 3 {
-                    HStack {
-                        Text("+\(models.count - 3) more model\(models.count == 4 ? "" : "s")")
-                            .font(Theme.retro(size: 7))
-                            .foregroundStyle(Theme.textMuted)
-                        Spacer()
-                    }
-                }
-            }
-        }
-    }
-
-    private func modelRow(_ entry: TokenUsageSummary.ModelSpend, share: Double, index: Int) -> some View {
-        HStack(spacing: 6) {
-            Circle()
-                .fill(modelColor(index))
-                .frame(width: 5, height: 5)
-            Text(entry.displayName)
-                .font(Theme.retro(size: 8))
-                .foregroundStyle(Theme.textSecondary)
-                .lineLimit(1)
-            Spacer(minLength: 4)
-            Text(TokenUsageFormat.compact(entry.counts.total))
-                .font(Theme.retro(size: 8))
-                .foregroundStyle(Theme.textPrimary)
-                .monospacedDigit()
-            shareBar(share: share, color: modelColor(index))
-            Text(sharePercent(share))
-                .font(Theme.retro(size: 7))
-                .foregroundStyle(Theme.textMuted)
-                .monospacedDigit()
-                .frame(width: 26, alignment: .trailing)
-        }
-        .help("""
-            \(entry.displayName) — \(TokenUsageFormat.exact(entry.counts.total)) tokens
-            Input \(TokenUsageFormat.exact(entry.counts.input)) · output \(TokenUsageFormat.exact(entry.counts.output))
-            Cache write \(TokenUsageFormat.exact(entry.counts.cacheCreation)) · cache read \(TokenUsageFormat.exact(entry.counts.cacheRead))
-            """)
-    }
-
-    /// A model that ran once in a month is a rounding error against a billion
-    /// cache-read tokens — "<1%" says "present but negligible", "0%" reads as
-    /// a bug.
-    private func sharePercent(_ share: Double) -> String {
-        let percent = share * 100
-        if percent > 0 && percent < 0.5 { return "<1%" }
-        return "\(Int(percent.rounded()))%"
-    }
-
-    private func shareBar(share: Double, color: Color) -> some View {
-        ZStack(alignment: .leading) {
-            Capsule().fill(Theme.bgRaised)
-            GeometryReader { proxy in
-                Capsule()
-                    .fill(color)
-                    .frame(width: max(2, proxy.size.width * min(max(share, 0), 1)))
-            }
-        }
-        .frame(width: 54, height: 4)
-    }
-
-    private func modelColor(_ index: Int) -> Color {
-        switch index {
-        case 0: return Theme.accentWarm
-        case 1: return Theme.accentCool
-        default: return Theme.textSecondary
-        }
+        .help(rangeTooltip(total))
     }
 
     // MARK: - Empty state
@@ -283,6 +223,34 @@ struct TokenUsageView: View {
     }
 
     // MARK: - Helpers
+
+    /// The per-model split used to have its own rows. It answered a question
+    /// nobody was asking of a menu-bar popover — one model is ~100 % of the
+    /// total for most people — so it moved into the hover text rather than
+    /// being thrown away.
+    private func rangeTooltip(_ total: TokenCounts) -> String {
+        var lines = [
+            "Last \(range.days) days — \(TokenUsageFormat.exact(total.fresh)) tokens produced or sent:",
+            "  input \(TokenUsageFormat.exact(total.input))",
+            "  output \(TokenUsageFormat.exact(total.output))",
+            "  cache writes \(TokenUsageFormat.exact(total.cacheCreation))",
+            "",
+            "Plus \(TokenUsageFormat.exact(total.cacheRead)) cache reads — context replayed on every",
+            "turn, paid for once when it was written. Counted apart because it",
+            "swamps everything else (\(TokenUsageFormat.exact(total.total)) all in).",
+        ]
+        let models = monitor.summary.modelBreakdown(lastDays: range.days)
+        if !models.isEmpty {
+            lines.append("")
+            let grand = max(models.reduce(0) { $0 + $1.counts.total }, 1)
+            for entry in models.prefix(5) {
+                let share = Double(entry.counts.total) / Double(grand) * 100
+                let percent = share > 0 && share < 0.5 ? "<1%" : "\(Int(share.rounded()))%"
+                lines.append("\(entry.displayName): \(TokenUsageFormat.exact(entry.counts.total)) (\(percent))")
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
 
     private func midpoint(of series: [DailyTokenUsage]) -> Date? {
         let index = series.count / 2
@@ -309,9 +277,15 @@ struct TokenUsageView: View {
             return "\(formatter.string(from: day.day)) — no tokens"
         }
         return """
-            \(formatter.string(from: day.day)) — \(TokenUsageFormat.exact(counts.total)) tokens · \(day.messages) turns
-            Input \(TokenUsageFormat.exact(counts.input)) · output \(TokenUsageFormat.exact(counts.output))
-            Cache write \(TokenUsageFormat.exact(counts.cacheCreation)) · cache read \(TokenUsageFormat.exact(counts.cacheRead))
+            \(formatter.string(from: day.day)) — \(day.messages) turn\(day.messages == 1 ? "" : "s")
+
+            \(TokenUsageFormat.exact(counts.fresh)) tokens produced or sent
+              input \(TokenUsageFormat.exact(counts.input))
+              output \(TokenUsageFormat.exact(counts.output))
+              cache writes \(TokenUsageFormat.exact(counts.cacheCreation))
+
+            \(TokenUsageFormat.exact(counts.cacheRead)) cache reads — context replayed each turn,
+            paid for once when it was written. \(TokenUsageFormat.exact(counts.total)) all in.
             """
     }
 

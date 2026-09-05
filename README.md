@@ -137,10 +137,17 @@ first one only reads the bytes that were appended. Turns replayed by resumed or
 forked sessions are de-duplicated by message + request id, which matters: they
 are roughly half of all records on a busy machine.
 
-Totals include cache reads, which dominate agentic work — the tooltip on any
-bar breaks out input / output / cache write / cache read. Turn the whole thing
-off in **Preferences → Data Source → Token spend** and ClawdBar never opens
-`~/.claude/projects`.
+**What the number counts.** The headline is input + output + cache writes —
+the tokens your machine actually produced or sent. Cache reads are named
+separately (`+25M CACHED`) rather than folded in, because on agentic work they
+run **97–99 % of the raw total**: every turn replays a context that was paid
+for once when it was written. Lead with the raw total and an ordinary day reads
+as tens of millions of tokens, which is true and tells you nothing. The tooltip
+on the headline, on any bar, and on the range line spells out all four counters,
+the all-in total, and the per-model split.
+
+Turn the whole thing off in **Preferences → Data Source → Token spend** and
+ClawdBar never opens `~/.claude/projects`.
 
 ### Service status
 

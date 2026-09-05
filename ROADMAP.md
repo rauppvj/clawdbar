@@ -7,11 +7,18 @@ where the project is headed.
 
 ### Daily token spend — landed 2026-09-05
 
-The popover grew a tab bar. **TOKENS** leads: today's spend as a headline, a
-7-day or 30-day bar chart under it, and a per-model breakdown — read out of the
-transcripts Claude Code already writes to `~/.claude/projects`, so it costs no
-API call and no network. **SERVICE** keeps the status panel, which is green
-almost every day; it badges itself and steals focus when it isn't.
+The popover grew a tab bar. **TOKENS** leads: today's spend as a headline and a
+7-day or 30-day bar chart under it — read out of the transcripts Claude Code
+already writes to `~/.claude/projects`, so it costs no API call and no network.
+**SERVICE** keeps the status panel, which is green almost every day; it badges
+itself and steals focus when it isn't. Both panels stay in the layout, so the
+popover keeps one height across tab switches.
+
+The headline counts input + output + cache writes, and names cache reads
+separately. Cache reads are 97–99 % of the raw total here, so headlining the
+total made a normal day read as 23M tokens — arithmetically right, and wrong as
+an answer to "what did I spend today". The per-model split moved into the hover
+text for the same reason: one model is ~100 % of the total for most people.
 
 The scan is incremental (per-file size/mtime/byte cursor) and de-duplicates the
 turns that resumed sessions replay — about half of all usage records on a busy
