@@ -83,6 +83,16 @@ enum TokenProbeCommand {
 enum TokenRenderCommand {
     static let flag = "--render-tokens"
 
+    /// `--hover-days-ago N` seeds the chart's hover state for the render.
+    private static func hoverDay(_ arguments: [String]) -> Date? {
+        guard let index = arguments.firstIndex(of: "--hover-days-ago"),
+              index + 1 < arguments.count,
+              let offset = Int(arguments[index + 1])
+        else { return nil }
+        let calendar = Calendar.current
+        return calendar.date(byAdding: .day, value: -offset, to: calendar.startOfDay(for: .now))
+    }
+
     @MainActor
     static func run(arguments: [String]) -> Int32 {
         BundledFont.registerAll()
@@ -106,7 +116,7 @@ enum TokenRenderCommand {
             .padding(.horizontal, 16)
             .padding(.top, 10)
 
-            TokenUsageView(monitor: monitor)
+            TokenUsageView(monitor: monitor, previewHover: hoverDay(arguments))
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
         }

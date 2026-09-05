@@ -17,8 +17,14 @@ popover keeps one height across tab switches.
 The headline counts input + output + cache writes, and names cache reads
 separately. Cache reads are 97–99 % of the raw total here, so headlining the
 total made a normal day read as 23M tokens — arithmetically right, and wrong as
-an answer to "what did I spend today". The per-model split moved into the hover
-text for the same reason: one model is ~100 % of the total for most people.
+an answer to "what did I spend today". The per-model rows came out for the same
+kind of reason: one model is ~100 % of the total for most people, so they were
+three lines saying "Opus 5, 100 %". They live in `--probe-tokens` now.
+
+Exact figures come from a readout line under the chart that swaps to whichever
+bar the pointer is over, rather than from `.help()`. macOS tooltips have a fixed
+~2 s delay and system light chrome, which reads as a white slab bolted onto a
+black pixel-art popover.
 
 The scan is incremental (per-file size/mtime/byte cursor) and de-duplicates the
 turns that resumed sessions replay — about half of all usage records on a busy
