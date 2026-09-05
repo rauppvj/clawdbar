@@ -8,14 +8,22 @@ struct TokenCounts: Codable, Equatable, Sendable {
     var cacheCreation: Int = 0
     var cacheRead: Int = 0
 
-    /// Everything the request moved, cache reads included. This is the number
-    /// ccusage and the Claude web UI headline, and the one that makes days
-    /// comparable — cache reads are most of the volume for agentic work.
+    /// Everything the request moved, cache reads included — the number
+    /// ccusage headlines. Not what claude.ai plots: its chart is `uncached`,
+    /// and cache reads are 97–99 % of the volume on agentic work.
     var total: Int { input + output + cacheCreation + cacheRead }
 
-    /// Tokens that had to be produced or ingested fresh. Useful as the
-    /// secondary figure because it tracks "real work" rather than replay.
+    /// Tokens that had to be produced or ingested fresh — cache writes
+    /// included, since a cache write is new context the model still had to
+    /// read. Kept as the "real work" figure the probe CLI prints.
     var fresh: Int { input + output + cacheCreation }
+
+    /// Input + output: the two counters that never touched the prompt cache,
+    /// and the only two claude.ai's own usage chart plots. This is the
+    /// headline because it is the number the user can check against
+    /// claude.ai — see `DailyTokenUsage.rawTotals` for the other half of
+    /// making those two agree.
+    var uncached: Int { input + output }
 
     var isEmpty: Bool { total == 0 }
 
@@ -49,6 +57,23 @@ struct DailyTokenUsage: Equatable, Sendable, Identifiable {
     let day: Date
     var byModel: [String: TokenCounts]
     var messages: Int
+    /// The same day summed over every transcript *record* rather than every
+    /// API call — the duplicates `TokenUsageScanner` drops left back in.
+    ///
+    /// Claude Code writes one JSONL line per content block of a response
+    /// (`thinking`, `text`, `tool_use`), and every one of those lines repeats
+    /// the response's single `usage` block. claude.ai's usage chart adds them
+    /// all up: on this machine 32,719 records for 17,223 real calls, and its
+    /// per-model figures match this sum to the token. So the deduplicated
+    /// totals above are what was actually generated, and this is what the
+    /// website will say — the readout shows both rather than picking a side.
+    ///
+    /// Held per transcript file rather than accumulated per day, so it can be
+    /// dropped when a file is re-read from byte zero. The cost of that is a
+    /// day whose transcripts Claude Code has since deleted keeps its
+    /// deduplicated totals but loses this one; every reader therefore treats
+    /// a value at or below `totals` as "not known" and shows nothing.
+    var rawTotals: TokenCounts = .zero
 
     var id: Date { day }
 
@@ -57,7 +82,7 @@ struct DailyTokenUsage: Equatable, Sendable, Identifiable {
     }
 
     static func empty(_ day: Date) -> DailyTokenUsage {
-        DailyTokenUsage(day: day, byModel: [:], messages: 0)
+        DailyTokenUsage(day: day, byModel: [:], messages: 0, rawTotals: .zero)
     }
 }
 
@@ -84,7 +109,8 @@ struct TokenUsageSummary: Equatable, Sendable {
             DailyTokenUsage(
                 day: a.day,
                 byModel: a.byModel.merging(b.byModel, uniquingKeysWith: +),
-                messages: a.messages + b.messages
+                messages: a.messages + b.messages,
+                rawTotals: a.rawTotals + b.rawTotals
             )
         })
         return (0..<count).reversed().compactMap { offset in
@@ -97,6 +123,13 @@ struct TokenUsageSummary: Equatable, Sendable {
     func total(lastDays count: Int, now: Date = .now, calendar: Calendar = .current) -> TokenCounts {
         window(days: count, now: now, calendar: calendar)
             .reduce(.zero) { $0 + $1.totals }
+    }
+
+    /// The same window as `total(lastDays:)`, counted the way claude.ai counts
+    /// it. See `DailyTokenUsage.rawTotals`.
+    func rawTotal(lastDays count: Int, now: Date = .now, calendar: Calendar = .current) -> TokenCounts {
+        window(days: count, now: now, calendar: calendar)
+            .reduce(.zero) { $0 + $1.rawTotals }
     }
 
     func messages(lastDays count: Int, now: Date = .now, calendar: Calendar = .current) -> Int {

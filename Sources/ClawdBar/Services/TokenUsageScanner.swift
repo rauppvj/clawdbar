@@ -13,10 +13,18 @@ import Foundation
 ///    cannot contain a day we still show, so it is marked consumed unread.
 ///    That keeps the very first scan off the hundreds of megabytes of
 ///    transcripts a heavy user accumulates.
-/// 3. **Dedup by (message id, request id).** Resumed and forked sessions
-///    replay earlier turns into the new file — on this machine that is ~47 %
-///    of all usage records — so counting raw lines would inflate every number.
-///    Hashes are kept per day and pruned along with the day.
+/// 3. **Dedup by (message id, request id).** One API response is written as
+///    several lines — one per content block (`thinking`, `text`, `tool_use`) —
+///    and every one of them repeats the response's single `usage` block.
+///    Resumed and forked sessions then replay those lines into the new file.
+///    Counting raw lines therefore inflates every number ~2×, so hashes are
+///    kept per day and pruned along with the day.
+///
+/// Both counts are kept. `DayRecord.models` holds the deduplicated one — the
+/// tokens that were really generated — and `FileCursor.raw` holds the naive
+/// per-line sum, because that is precisely what claude.ai's own usage chart
+/// plots, and the popover shows the two side by side rather than leaving the
+/// user to wonder which of the app and the website is lying.
 struct TokenUsageScanner: Sendable {
 
     struct Configuration: Sendable {
@@ -89,14 +97,20 @@ struct TokenUsageScanner: Sendable {
             }
 
             // A file that shrank was rewritten, not appended to — start over.
-            // Dedup makes the re-read idempotent.
+            // Dedup makes the re-read idempotent for the deduplicated totals;
+            // the raw tally has no such protection, which is exactly why it is
+            // held per file and thrown away with the offset.
             var offset = previous?.offset ?? 0
-            if offset > file.size { offset = 0 }
+            var raw = previous?.raw ?? [:]
+            if offset > file.size {
+                offset = 0
+                raw = [:]
+            }
 
             let consumed = readEntries(at: file.url, from: offset) { entry in
-                absorb(entry, into: &cache, bucket: &bucket, cutoff: cutoff)
+                absorb(entry, into: &cache, raw: &raw, bucket: &bucket, cutoff: cutoff)
             }
-            cache.files[key] = FileCursor(offset: consumed, size: file.size, modified: file.modified)
+            cache.files[key] = FileCursor(offset: consumed, size: file.size, modified: file.modified, raw: raw)
         }
 
         // Forget files that no longer exist so the cache can't grow forever.
@@ -114,6 +128,7 @@ struct TokenUsageScanner: Sendable {
     private func absorb(
         _ entry: TranscriptEntry,
         into cache: inout Cache,
+        raw: inout [String: TokenCounts],
         bucket: inout DayBucketer,
         cutoff: Date
     ) {
@@ -127,15 +142,6 @@ struct TokenUsageScanner: Sendable {
               date >= cutoff
         else { return }
 
-        let dayKey = bucket.key(for: date)
-
-        // Replay of a turn we already counted, from a resumed or forked session.
-        let hash = Self.fingerprint(messageID: message.id, requestID: entry.requestId)
-        if let hash {
-            if cache.keys[dayKey]?.contains(hash) == true { return }
-            cache.keys[dayKey, default: []].append(hash)
-        }
-
         let counts = TokenCounts(
             input: usage.inputTokens ?? 0,
             output: usage.outputTokens ?? 0,
@@ -143,6 +149,20 @@ struct TokenUsageScanner: Sendable {
             cacheRead: usage.cacheReadInputTokens ?? 0
         )
         guard !counts.isEmpty else { return }
+
+        let dayKey = bucket.key(for: date)
+
+        // Every record counts here, duplicates and replays included: this is
+        // the claude.ai-equivalent tally.
+        raw[dayKey, default: .zero] += counts
+
+        // Another block of a response we already counted, or a turn replayed
+        // into this file by a resumed or forked session.
+        let hash = Self.fingerprint(messageID: message.id, requestID: entry.requestId)
+        if let hash {
+            if cache.keys[dayKey]?.contains(hash) == true { return }
+            cache.keys[dayKey, default: []].append(hash)
+        }
 
         var record = cache.days[dayKey] ?? DayRecord(models: [:], messages: 0)
         record.models[model, default: .zero] += counts
@@ -229,7 +249,8 @@ struct TokenUsageScanner: Sendable {
         /// Day key → fingerprints already counted for that day.
         var keys: [String: [UInt64]]
 
-        static let current = 1
+        // 2: file cursors carry the per-day raw tally.
+        static let current = 2
         static let empty = Cache(version: Cache.current, files: [:], days: [:], keys: [:])
     }
 
@@ -237,6 +258,15 @@ struct TokenUsageScanner: Sendable {
         var offset: UInt64
         var size: UInt64
         var modified: TimeInterval
+        /// Day key → every usage record this file carries for that day,
+        /// duplicates included. Per file rather than per day because a
+        /// rewritten file is re-read from byte zero, and an undeduplicated
+        /// counter has to be able to drop its old contribution.
+        var raw: [String: TokenCounts] = [:]
+
+        enum CodingKeys: String, CodingKey {
+            case offset = "off", size = "sz", modified = "mt", raw
+        }
     }
 
     private struct DayRecord: Codable {
@@ -265,13 +295,27 @@ struct TokenUsageScanner: Sendable {
         // Keys are "yyyy-MM-dd", so a lexicographic compare is a date compare.
         cache.days = cache.days.filter { $0.key >= cutoffKey }
         cache.keys = cache.keys.filter { $0.key >= cutoffKey }
+        for (path, cursor) in cache.files where cursor.raw.contains(where: { $0.key < cutoffKey }) {
+            cache.files[path]?.raw = cursor.raw.filter { $0.key >= cutoffKey }
+        }
     }
 
     private func summary(from cache: Cache, calendar: Calendar, filesSeen: Int) -> TokenUsageSummary {
         let bucket = DayBucketer(calendar: calendar)
+        var raw: [String: TokenCounts] = [:]
+        for cursor in cache.files.values {
+            for (dayKey, counts) in cursor.raw {
+                raw[dayKey, default: .zero] += counts
+            }
+        }
         let days: [DailyTokenUsage] = cache.days.compactMap { key, record in
             guard let day = bucket.date(fromKey: key) else { return nil }
-            return DailyTokenUsage(day: day, byModel: record.models, messages: record.messages)
+            return DailyTokenUsage(
+                day: day,
+                byModel: record.models,
+                messages: record.messages,
+                rawTotals: raw[key] ?? .zero
+            )
         }
         .sorted { $0.day < $1.day }
 

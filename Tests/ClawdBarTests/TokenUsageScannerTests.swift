@@ -133,6 +133,58 @@ final class TokenUsageScannerTests: XCTestCase {
 
         XCTAssertEqual(summary.total(lastDays: 1).total, 200, "the replayed turn must only count once")
         XCTAssertEqual(summary.window(days: 1).last?.messages, 2)
+        XCTAssertEqual(summary.rawTotal(lastDays: 1).total, 300,
+                       "claude.ai counts the replay, so the mirror tally has to as well")
+    }
+
+    /// One API response is written as one line per content block, each
+    /// repeating the response's single `usage`. That is the bulk of the ~2×
+    /// gap against claude.ai's chart, so both sides of it are asserted here.
+    func testKeepsTheUndeduplicatedTallyClaudeAiPlots() throws {
+        try write([
+            line(messageID: "m1", requestID: "r1"),   // thinking
+            line(messageID: "m1", requestID: "r1"),   // text
+            line(messageID: "m1", requestID: "r1"),   // tool_use
+            line(messageID: "m2", requestID: "r2"),
+        ], to: "proj-a/session.jsonl")
+
+        let today = try scanner().scan().window(days: 1).last!
+
+        XCTAssertEqual(today.totals.total, 200, "two responses actually happened")
+        XCTAssertEqual(today.messages, 2)
+        XCTAssertEqual(today.rawTotals.total, 400, "four records is what the website adds up")
+        XCTAssertEqual(today.rawTotals.uncached, 4 * 30)
+        XCTAssertEqual(today.totals.uncached, 2 * 30)
+    }
+
+    func testRawTallyPicksUpBlocksThatArriveOnALaterScan() throws {
+        try write([line(messageID: "m1", requestID: "r1")], to: "proj-a/session.jsonl")
+        let scanner = scanner()
+        XCTAssertEqual(try scanner.scan().rawTotal(lastDays: 1).total, 100)
+
+        // The next content block of the same response, written after the scan.
+        try append(line(messageID: "m1", requestID: "r1") + "\n", to: "proj-a/session.jsonl")
+
+        let after = try scanner.scan().window(days: 1).last!
+        XCTAssertEqual(after.totals.total, 100, "still one API call")
+        XCTAssertEqual(after.rawTotals.total, 200, "but two records on disk")
+    }
+
+    /// The dedup hashes make a re-read idempotent; the raw tally has nothing
+    /// like that, so it is held per file and dropped along with the offset.
+    /// It therefore tracks what is on disk now rather than accumulating.
+    func testRewrittenFileDoesNotDoubleTheRawTally() throws {
+        try write([
+            line(messageID: "m1", requestID: "r1"),
+            line(messageID: "m2", requestID: "r2"),
+        ], to: "proj-a/session.jsonl")
+        let scanner = scanner()
+        XCTAssertEqual(try scanner.scan().rawTotal(lastDays: 1).total, 200)
+
+        try write([line(messageID: "m1", requestID: "r1")], to: "proj-a/session.jsonl")
+
+        XCTAssertEqual(try scanner.scan().rawTotal(lastDays: 1).total, 100,
+                       "re-reading from byte zero must replace the file's tally, not add to it")
     }
 
     func testRewrittenFileIsNotDoubleCounted() throws {
