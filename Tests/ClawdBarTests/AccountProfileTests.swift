@@ -66,13 +66,45 @@ final class AccountProfileStoreTests: XCTestCase {
 @MainActor
 final class DaemonPlanSourceTests: XCTestCase {
 
-    private struct StubProfileStore: AccountProfileLoading {
-        let profile: AccountProfile?
-        func load() -> AccountProfile? { profile }
-        func modifiedAt() -> Date? { profile == nil ? nil : Date(timeIntervalSince1970: 1) }
+    /// Mutable so a test can move the plan under a running daemon, the way a
+    /// real upgrade rewrites ~/.claude.json.
+    private final class StubProfileStore: AccountProfileLoading, @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored: AccountProfile?
+        private var stamp: Date?
+        private var fileExists: Bool
+        private(set) var loadCount = 0
+
+        init(profile: AccountProfile?, fileExists: Bool? = nil) {
+            stored = profile
+            stamp = profile == nil ? nil : Date(timeIntervalSince1970: 1)
+            self.fileExists = fileExists ?? (profile != nil)
+        }
+
+        /// Rewrites the file: new contents, new mtime.
+        func rewrite(profile: AccountProfile?, exists: Bool = true) {
+            lock.withLock {
+                stored = profile
+                fileExists = exists
+                stamp = exists ? Date(timeIntervalSince1970: 2) : nil
+            }
+        }
+
+        func load() -> AccountProfile? {
+            lock.withLock {
+                loadCount += 1
+                return stored
+            }
+        }
+
+        func modifiedAt() -> Date? { lock.withLock { fileExists ? stamp : nil } }
     }
 
     private func daemon(profile: AccountProfile?) -> UsageDaemon {
+        daemon(store: StubProfileStore(profile: profile))
+    }
+
+    private func daemon(store: StubProfileStore) -> UsageDaemon {
         UsageDaemon(
             client: MockUsageFetcher(behavior: .success(.empty)),
             credentialStore: MockCredentialLoader(.success(Credentials(
@@ -81,7 +113,7 @@ final class DaemonPlanSourceTests: XCTestCase {
                 source: .keychain))),
             vault: InMemoryVault(),
             history: .temporary(),
-            profileStore: StubProfileStore(profile: profile),
+            profileStore: store,
             autoStart: false
         )
     }
@@ -111,5 +143,68 @@ final class DaemonPlanSourceTests: XCTestCase {
         XCTAssertEqual(daemon.subscriptionType, "pro")
         XCTAssertEqual(daemon.rateLimitTier, "default_claude_ai")
         XCTAssertEqual(daemon.planSource, "OAuth token claims")
+    }
+
+    func testAPlanUpgradeIsPickedUpWithoutARestart() async {
+        // The whole point of reading the file instead of the token: a user
+        // changes plan mid-session and the pill has to follow.
+        let store = StubProfileStore(profile: AccountProfile(
+            organizationType: "claude_pro",
+            organizationRateLimitTier: "default_claude_ai"
+        ))
+        let daemon = daemon(store: store)
+        XCTAssertEqual(
+            PlanBadge.label(subscriptionType: daemon.subscriptionType, rateLimitTier: daemon.rateLimitTier),
+            "PRO"
+        )
+
+        store.rewrite(profile: AccountProfile(
+            organizationType: "claude_max",
+            organizationRateLimitTier: "default_claude_max_5x"
+        ))
+        await daemon.refreshNow()
+
+        XCTAssertEqual(
+            PlanBadge.label(subscriptionType: daemon.subscriptionType, rateLimitTier: daemon.rateLimitTier),
+            "MAX 5×",
+            "a plan change rewrites ~/.claude.json — the pill has to follow it"
+        )
+    }
+
+    func testTheFileIsOnlyReparsedWhenItMoves() async {
+        let store = StubProfileStore(profile: AccountProfile(organizationType: "claude_max"))
+        let daemon = daemon(store: store)
+        let afterInit = store.loadCount
+
+        await daemon.refreshNow()
+        await daemon.refreshNow()
+
+        XCTAssertEqual(store.loadCount, afterInit, "an unchanged mtime must not re-parse 230 KB of JSON")
+    }
+
+    func testSignOutFallsBackToTheTokenClaims() async throws {
+        let store = StubProfileStore(profile: AccountProfile(organizationType: "claude_max"))
+        let daemon = daemon(store: store)
+        XCTAssertEqual(daemon.subscriptionType, "claude_max")
+
+        // Still a readable file, but the account block is gone.
+        store.rewrite(profile: nil)
+        await daemon.refreshNow()
+        _ = try daemon.loadCredentials()
+
+        XCTAssertEqual(daemon.subscriptionType, "pro", "a sign-out shouldn't pin the old plan")
+        XCTAssertEqual(daemon.planSource, "OAuth token claims")
+    }
+
+    func testAVanishedFileKeepsWhatWeAlreadyKnew() async {
+        let store = StubProfileStore(profile: AccountProfile(organizationType: "claude_max"))
+        let daemon = daemon(store: store)
+
+        // Not a sign-out — the file itself is unreachable. The account didn't
+        // change, our view of the disk did.
+        store.rewrite(profile: nil, exists: false)
+        await daemon.refreshNow()
+
+        XCTAssertEqual(daemon.subscriptionType, "claude_max")
     }
 }
