@@ -64,28 +64,32 @@ namespace ClawdBar
         }
     }
 
-    /// Turns the two plan-ish claims carried by the Claude Code OAuth token
-    /// into the pill shown in the tray panel's header.
+    /// Turns a plan family plus a rate-limit tier into the pill shown in the
+    /// tray panel's header.
     ///
-    /// Both claims are minted by Anthropic's auth server and only change when
-    /// the token itself is re-issued — a plan upgrade does *not* rewrite the
-    /// stored token, so the pill can legitimately lag until the user re-runs
-    /// `claude /login`. Nothing here can fix that; the job is only to read what
-    /// is there without being fussy about its exact spelling.
+    /// Two sources can feed it and they use different vocabularies. The OAuth
+    /// token's claims are minted at login and are *not* rewritten when the
+    /// token refreshes, so a Max 5x account can carry a token that still says
+    /// "pro" months later. `oauthAccount` in %USERPROFILE%\.claude.json tracks
+    /// the live account instead, so UsageDaemon prefers it and falls back to
+    /// the claims. This type's job is to read whichever it is handed without
+    /// being fussy about spelling.
     internal static class PlanBadge
     {
-        /// subscriptionType is `claudeAiOauth.subscriptionType` — seen as
-        /// "pro", "max", and (on some accounts) "max_5x" / "max_20x".
-        /// rateLimitTier is `claudeAiOauth.rateLimitTier`, an opaque id such as
-        /// "default_claude_ai" or "default_claude_max_20x"; it carries the
-        /// multiplier when subscriptionType doesn't. Returns null when there is
-        /// nothing to show.
+        /// subscriptionType is the plan family - `oauthAccount.organizationType`
+        /// ("claude_max") when .claude.json is readable, otherwise
+        /// `claudeAiOauth.subscriptionType` ("pro", "max", "max_5x").
+        /// rateLimitTier is an opaque id such as "default_claude_ai" or
+        /// "default_claude_max_20x"; it carries the multiplier when the family
+        /// doesn't. Returns null when there is nothing to show.
         public static string Label(string subscriptionType, string rateLimitTier)
         {
             string raw = subscriptionType == null ? "" : subscriptionType.Trim();
             if (raw.Length == 0) return null;
 
-            string sub = raw.ToLowerInvariant();
+            // The two sources spell the family differently: the token claim
+            // says "max", .claude.json says "claude_max". Normalise first.
+            string sub = raw.ToLowerInvariant().Replace("claude_", "");
             string tier = (rateLimitTier == null ? "" : rateLimitTier).ToLowerInvariant();
 
             // The multiplier can arrive on either claim, so check both before
@@ -107,17 +111,18 @@ namespace ClawdBar
                 case "enterprise": return "ENTERPRISE";
                 case "free": return "FREE";
                 // An unknown plan name is still better shown than swallowed.
-                default: return raw.ToUpperInvariant();
+                default: return sub.ToUpperInvariant();
             }
         }
 
-        /// Tooltip for the pill. The label is read from the token, so when it
-        /// disagrees with reality the fix is a re-login, not a ClawdBar setting
-        /// — say so where the user is already looking.
+        /// Tooltip for the pill. Names the source, because the two disagree
+        /// often enough to be worth explaining: the token claim is frozen at
+        /// login while .claude.json follows the account.
         public const string Help =
-            "Plan as claimed by your Claude Code OAuth token. It only changes when the token is " +
-            "re-issued - after changing plans, run `claude /login` in a terminal, then hit " +
-            "\"Re-read credentials\" in Preferences > Data Source.";
+            "Plan as reported by Claude Code in %USERPROFILE%\\.claude.json. If that file is " +
+            "missing, ClawdBar falls back to the claims inside your OAuth token - those are " +
+            "minted at login and are not rewritten when the token refreshes, so they can name " +
+            "an old plan until you run `claude /login`.";
     }
 
     internal static class Clock

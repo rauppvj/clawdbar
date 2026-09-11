@@ -12,7 +12,8 @@ package and the macOS CI workflow is untouched.
 ClawdBar polls Anthropic's Messages API with a 1-token Haiku ping, parses the
 `anthropic-ratelimit-unified-*` headers, and surfaces your **5 h session** and **7 d weekly**
 utilization in the tray — plus a floating overlay, threshold notifications, a 7-day
-activity heatmap, and the live status of Anthropic's own services.
+activity heatmap, your **daily token spend**, and the live status of Anthropic's own
+services.
 
 | | |
 |---|---|
@@ -66,8 +67,15 @@ of **US$ 0.0001/day** against your Anthropic account.
 ### Supported plans
 
 The unified 5 h + 7 d rate-limit system is the same across every Claude Code plan, so this
-works on **Pro**, **Max** (5× and 20×) and **Team**. The plan badge in the panel comes
-straight from the token's `subscriptionType`.
+works on **Pro**, **Max** (5× and 20×) and **Team**.
+
+The plan badge in the panel prefers what Claude Code records in
+`%USERPROFILE%\.claude.json` (`oauthAccount.organizationType` /
+`organizationRateLimitTier`) and falls back to the token's own `subscriptionType` claim.
+That order matters: the token claims are minted at login and are **not** rewritten when the
+token refreshes, so a Max 5× account can carry a token that still says `pro` months later.
+The JSON file follows the account, so an upgrade shows up without a re-login. Preferences
+→ Data Source names which of the two the badge is reading.
 
 **Not supported:** direct Anthropic API keys from console.anthropic.com — different auth
 scheme (`x-api-key`) and a different rate-limit header family.
@@ -77,8 +85,10 @@ scheme (`x-api-key`) and a different rate-limit header family.
 - **Tray icon**, five styles: Numeric, Mini Bar, Mascot, Dual Bar, Hybrid
 - **Panel** on left-click — both windows, reset countdowns, plan badge, which window is
   currently binding, refresh / overlay / preferences / quit
-- **Service status** from status.claude.com in the panel and on its own overlay page, so a
-  red number can be told apart from an Anthropic incident
+- **Token spend**, charted per day from Claude Code's own transcripts — a **TOKENS** tab
+  in the panel, 7-day or 30-day
+- **Service status** from status.claude.com behind a **SERVICE** tab, so a red number can
+  be told apart from an Anthropic incident — also on its own overlay page
 - **Floating widget** with five pages you page through with the chevrons:
   current usage, activity heatmap, stats, the tamagotchi where the capybara slowly
   drowns as you burn through your window, and service status
@@ -91,6 +101,40 @@ scheme (`x-api-key`) and a different rate-limit header family.
 | | | | |
 |---|---|---|---|
 | ![Heatmap](docs/overlay-heatmap.png) | ![Stats](docs/overlay-stats.png) | ![Tamagotchi](docs/overlay-tamagotchi.png) | ![Service status](docs/overlay-status.png) |
+
+### Daily token spend
+
+The rate-limit bars answer "how close am I to the ceiling". They cannot answer "how much
+did I actually burn today" — the headers carry a percentage, not a count. So the panel
+grew a tab bar, and **TOKENS** leads it.
+
+Claude Code already writes every turn to `%USERPROFILE%\.claude\projects\**\*.jsonl`,
+`message.usage` block and all. ClawdBar rolls those up into daily totals: today's spend as
+the headline, a 7-day or 30-day bar chart under it, and a readout line that swaps to
+whichever bar the pointer is over. Entirely local — no credentials, no network, no API
+call, nothing leaves the machine.
+
+**The headline is input + output.** Cache reads run 97–99 % of the raw total on agentic
+work, because every turn replays a context that was paid for once; leading with the total
+makes an ordinary day read as tens of millions of tokens, which is true and useless. Cache
+writes and cache reads are named in the caption instead, so all four counters stay on
+screen and nothing is quietly folded into the big number.
+
+**Two counts, both shown.** Claude Code writes one JSONL line per content block of a
+response (`thinking`, `text`, `tool_use`) and every one of them repeats that response's
+single `usage` block; resumed and forked sessions then replay those lines into the new
+file. ClawdBar de-duplicates by (message id, request id), so its number is what was
+actually generated — but claude.ai's own usage chart adds every record up, which runs
+about 2.2× higher on this machine. The readout shows both rather than leaving you to find
+the gap and conclude one of them is broken.
+
+The scan is incremental: each transcript is remembered by (size, mtime, byte offset) and
+only the new bytes are read, so a refresh after the first pass is a stat per file. A cold
+pass over 580 MB of transcripts takes about 1.2 s here; a warm one 0.03 s. The cache lives
+at `%USERPROFILE%\.clawdbar\tokens.json` and keeps 90 days.
+
+Turn it off in **Preferences → Data Source → Token spend**; off means the tab disappears
+and nothing under `.claude\projects` is ever opened.
 
 ### Service status
 
@@ -107,12 +151,15 @@ refresh with a `STALE` tag rather than blanking. Turn the whole thing off in
 **Preferences → Data Source → Service status**; off means zero requests to that host and no
 status surfaces anywhere.
 
+![The SERVICE tab](docs/popup-status.png)
+
 ## CLI probes
 
 ```cmd
 ClawdBar.exe --probe-credentials   :: inspect stored credentials (shape only, never the token)
 ClawdBar.exe --probe-api           :: spend 1 Haiku token, dump every anthropic-* header
 ClawdBar.exe --probe-status        :: fetch status.claude.com (no credentials, no tokens)
+ClawdBar.exe --probe-tokens        :: roll local transcripts up into daily token totals
 ClawdBar.exe --reset-onboarding    :: delete the settings file
 ClawdBar.exe --help
 ```
@@ -134,6 +181,9 @@ Ports are where the interesting decisions live. The behaviour differences, all d
 | Low Power Mode → 5× backoff | Battery saver → 5× backoff | Closest equivalent signal. |
 | Sliders in Preferences | Numeric spinners | Sliders can't be themed dark in WinForms without owner-drawing every part; the per-row "reset to default" buttons survive. |
 | `UserDefaults` | `%APPDATA%\ClawdBar\settings.json` | Same key names, so the two are easy to diff. |
+| Token mirrored into a ClawdBar-owned keychain item | *not ported* | That feature exists to stop the macOS keychain prompting on every OAuth refresh. Windows has no prompt to stop: the token is a plain file in the user's own profile. A second copy would be risk without benefit. |
+| Chart hover via `.help()` tooltips, text scaled with `minimumScaleFactor` | Readout line, one type size smaller | Same readout, but GDI+ has no text auto-scaling, and Press Start 2P is a fixed 8×8 grid — one size down is what fits three figures across 308 px. |
+| Token dedup fingerprint: 64-bit FNV-1a | folded to 53 bits | The cache round-trips through this port's own JSON reader, whose numbers are doubles. 53 bits keeps a collision across a day's turns at about one in 20 billion, and the two caches are per-platform anyway. |
 | `--export-icon` | *not ported* | It generated macOS `.icns` asset sizes. The Windows `.ico` is committed in `res\`. |
 
 Two things were fixed rather than carried over:
@@ -149,6 +199,8 @@ Two things were fixed rather than carried over:
 - The status-page request is a plain unauthenticated GET: no token, no usage data, no
   identifiers. Switch it off in Preferences and the host is never contacted.
 - No telemetry, no analytics, no crash reporting.
+- Token spend is read from transcripts Claude Code already wrote and is never sent
+  anywhere; the rollup cache stays on disk at `%USERPROFILE%\.clawdbar\tokens.json`.
 - Usage history stays on disk at `%USERPROFILE%\.clawdbar\history.jsonl`.
 - `--probe-credentials` prints token **length and an 8-character prefix**, never the token.
 
@@ -177,6 +229,9 @@ src\          the app (one namespace, no project file)
   UsageDaemon.cs      poll loop, credential cache, sleep/wake
   ServiceStatus.cs    status.claude.com snapshot: levels, components, incidents
   StatusMonitor.cs    status-page client and its own slow poll loop
+  TokenUsage.cs       token counters, daily rollup, compact formatting
+  TokenUsageScanner.cs  incremental transcript walk, dedup, on-disk cache, monitor
+  AccountProfile.cs   oauthAccount out of %USERPROFILE%\.claude.json
   Theme.cs            palette, embedded font, shared GDI+ drawing
   Mascot.cs           the 16x16 procedural capybara
   TrayIconRenderer.cs tray bitmaps for the five styles
@@ -195,7 +250,8 @@ build-preview.cmd     builds the dev harness
 
 ```cmd
 build-preview.cmd
-dist\Preview.exe popup       :: or: settings, onboarding, overlay [page]
+dist\Preview.exe popup       :: or: popup [tokens|status], settings [nav],
+                            ::     onboarding, overlay [page]
 ```
 
 Opens a single window against live data, without going through the tray. Quit ClawdBar

@@ -95,6 +95,11 @@ Models.cs            ← usage model, severity, mood
 AppSettings.cs       ← %APPDATA%\ClawdBar\settings.json (same key names as
                        the macOS UserDefaults, so the two are easy to diff)
 Json.cs              ← minimal parser, avoids a package dependency
+ServiceStatus.cs     ← status.claude.com snapshot model
+StatusMonitor.cs     ← status-page client + its own slow poll loop
+TokenUsage.cs        ← token counters, daily rollup, compact formatting
+TokenUsageScanner.cs ← incremental transcript walk + dedup + monitor
+AccountProfile.cs    ← oauthAccount out of %USERPROFILE%\.claude.json
 TrayIconRenderer.cs  ← the 5 icon styles, re-laid out for a square tray slot
 Mascot.cs            ← pixel capybara (port of MascotView.swift)
 Theme.cs             ← palette + embedded Press Start 2P
