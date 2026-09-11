@@ -133,6 +133,11 @@ both platforms, so a history file moves between them and streaks survive.
 Platform differences and the reasoning behind each are documented in
 [windows/README.md](./windows/README.md).
 
+Parity caught up on 2026-09-11 in PR #6, from the same contributor: service
+status, daily token spend and the account-backed plan pill are all on Windows
+now, each noted under its own heading above. The saved-credential mirror is the
+one macOS feature left out on purpose — see that section for why.
+
 Still open on Windows: attaching the built `.exe` to releases (CI produces it as
 a workflow artifact today) and the SmartScreen note for unsigned builds.
 
