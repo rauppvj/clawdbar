@@ -32,6 +32,9 @@ namespace ClawdBar
         public const string ApiModel = "claude-haiku-4-5-20251001";
         public const int OverlaySize = 200;
         public const bool ServiceStatusEnabled = true;
+        public const bool TokenUsageEnabled = true;
+        public const string PopoverTab = "tokens";
+        public const string TokenRange = "week";
     }
 
     /// Replaces macOS UserDefaults with a JSON file under %APPDATA%. Key names
@@ -59,6 +62,17 @@ namespace ClawdBar
         // Whether ClawdBar polls status.claude.com. Off means zero requests to
         // that host and no status surfaces anywhere in the UI.
         public bool ServiceStatusEnabled;
+
+        // Whether ClawdBar reads Claude Code's local transcripts to chart
+        // daily token spend. Off means the tab disappears and nothing under
+        // .claude\projects is ever opened.
+        public bool TokenUsageEnabled;
+
+        // Which tab the panel reopens on ("tokens" / "status"), and which
+        // range the token chart reopens on ("week" / "month"). Both are
+        // remembered so the panel comes back where the user left it.
+        public string PopoverTab;
+        public string TokenRange;
 
         public bool OnboardingDone;
 
@@ -117,6 +131,9 @@ namespace ClawdBar
             ApiBaseUrl = Defaults.ApiBaseUrl;
             ApiModel = Defaults.ApiModel;
             ServiceStatusEnabled = Defaults.ServiceStatusEnabled;
+            TokenUsageEnabled = Defaults.TokenUsageEnabled;
+            PopoverTab = Defaults.PopoverTab;
+            TokenRange = Defaults.TokenRange;
             OnboardingDone = false;
             OverlayX = 0;
             OverlayY = 0;
@@ -158,6 +175,9 @@ namespace ClawdBar
             ApiBaseUrl = Str(root, Key.ApiBaseUrl, ApiBaseUrl);
             ApiModel = Str(root, Key.ApiModel, ApiModel);
             ServiceStatusEnabled = Flag(root, Key.ServiceStatusEnabled, ServiceStatusEnabled);
+            TokenUsageEnabled = Flag(root, Key.TokenUsageEnabled, TokenUsageEnabled);
+            PopoverTab = Str(root, Key.PopoverTab, PopoverTab);
+            TokenRange = Str(root, Key.TokenRange, TokenRange);
             OnboardingDone = Flag(root, Key.OnboardingDone, OnboardingDone);
             OverlayX = (int)Num(root, Key.OverlayX, OverlayX);
             OverlayY = (int)Num(root, Key.OverlayY, OverlayY);
@@ -189,6 +209,9 @@ namespace ClawdBar
             root[Key.ApiBaseUrl] = JsonValue.From(ApiBaseUrl);
             root[Key.ApiModel] = JsonValue.From(ApiModel);
             root[Key.ServiceStatusEnabled] = JsonValue.From(ServiceStatusEnabled);
+            root[Key.TokenUsageEnabled] = JsonValue.From(TokenUsageEnabled);
+            root[Key.PopoverTab] = JsonValue.From(PopoverTab);
+            root[Key.TokenRange] = JsonValue.From(TokenRange);
             root[Key.OnboardingDone] = JsonValue.From(OnboardingDone);
             root[Key.OverlayX] = JsonValue.From(OverlayX);
             root[Key.OverlayY] = JsonValue.From(OverlayY);
@@ -307,6 +330,9 @@ namespace ClawdBar
             public const string ApiBaseUrl = "clawdbar.api.baseURL";
             public const string ApiModel = "clawdbar.api.model";
             public const string ServiceStatusEnabled = "clawdbar.serviceStatus.enabled";
+            public const string TokenUsageEnabled = "clawdbar.tokenUsage.enabled";
+            public const string PopoverTab = "clawdbar.popover.tab";
+            public const string TokenRange = "clawdbar.tokens.range";
             public const string OnboardingDone = "clawdbar.onboarding.done";
             public const string OverlayX = "clawdbar.overlay.x";
             public const string OverlayY = "clawdbar.overlay.y";

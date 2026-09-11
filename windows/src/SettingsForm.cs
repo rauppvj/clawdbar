@@ -15,6 +15,7 @@ namespace ClawdBar
         private readonly AppSettings _settings;
         private readonly UsageDaemon _daemon;
         private readonly StatusMonitor _status;
+        private readonly TokenUsageMonitor _tokens;
         private readonly Action _onSettingsChanged;
         private readonly Action _onResetOverlaySize;
 
@@ -26,13 +27,16 @@ namespace ClawdBar
         private Button _testButton;
         private Label _statusSummary;
         private Button _statusButton;
+        private Label _tokenSummary;
+        private Button _tokenButton;
 
         public SettingsForm(AppSettings settings, UsageDaemon daemon, StatusMonitor status,
-            Action onSettingsChanged, Action onResetOverlaySize)
+            TokenUsageMonitor tokens, Action onSettingsChanged, Action onResetOverlaySize)
         {
             _settings = settings;
             _daemon = daemon;
             _status = status;
+            _tokens = tokens;
             _onSettingsChanged = onSettingsChanged;
             _onResetOverlaySize = onResetOverlaySize;
 
@@ -94,12 +98,27 @@ namespace ClawdBar
             SelectPage(0);
 
             if (_status != null) _status.Changed += OnStatusChanged;
+            if (_tokens != null) _tokens.Changed += OnTokensChanged;
+        }
+
+        /// Opens the window on a given nav item. Used by the preview harness
+        /// so each page can be screenshotted for the docs.
+        public void ShowPage(int index)
+        {
+            if (index < 0 || index >= _pages.Count) return;
+            SelectPage(index);
         }
 
         private void OnStatusChanged(object sender, EventArgs e)
         {
             if (IsDisposed) return;
             UpdateStatusSummary();
+        }
+
+        private void OnTokensChanged(object sender, EventArgs e)
+        {
+            if (IsDisposed) return;
+            UpdateTokenSummary();
         }
 
         protected override void OnShown(EventArgs e)
@@ -111,6 +130,7 @@ namespace ClawdBar
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
             if (_status != null) _status.Changed -= OnStatusChanged;
+            if (_tokens != null) _tokens.Changed -= OnTokensChanged;
             base.OnFormClosed(e);
         }
 
@@ -290,6 +310,14 @@ namespace ClawdBar
                            "Windows Credential Manager (\"" + CredentialStore.CredentialManagerTarget +
                            "\") is checked as a fallback.");
 
+            // The plan pill has two possible sources and they disagree often
+            // enough that "which one am I looking at" is a real question.
+            layout.InfoRow("Plan source", _daemon.PlanSource);
+            layout.Caption("The plan badge prefers what Claude Code records in .claude.json, because a " +
+                           "refreshed OAuth token keeps whatever plan it was minted with. With that file " +
+                           "missing, the token claims are used instead and can name an old plan until " +
+                           "you run `claude /login`.");
+
             layout.Header("Connection");
             _testButton = layout.ButtonRow("Test connection", null);
             _testButton.Click += OnTestConnection;
@@ -325,6 +353,27 @@ namespace ClawdBar
 
             _statusSummary = layout.Caption("");
             UpdateStatusSummary();
+
+            layout.Header("Token spend");
+            layout.CheckRow("Chart daily token spend", _settings.TokenUsageEnabled,
+                delegate(bool value)
+                {
+                    _settings.TokenUsageEnabled = value;
+                    _settings.Save();
+                    if (_onSettingsChanged != null) _onSettingsChanged();
+                    UpdateTokenSummary();
+                    return value;
+                });
+            layout.Caption("Reads the transcripts Claude Code already writes under " +
+                           TokenUsageScanner.DefaultProjectsDirectory + " and rolls them up into daily " +
+                           "totals. Entirely local - no credentials, no network, nothing leaves the " +
+                           "machine. Off means the tab disappears and those files are never opened.");
+
+            _tokenButton = layout.ButtonRow("Rescan transcripts", null);
+            _tokenButton.Click += OnRescanTokens;
+
+            _tokenSummary = layout.Caption("");
+            UpdateTokenSummary();
 
             layout.Header("Advanced");
             layout.TextRow("API base URL", _settings.ApiBaseUrl,
@@ -385,6 +434,45 @@ namespace ClawdBar
                 _statusButton.Enabled = true;
                 UpdateStatusSummary();
             }
+        }
+
+        private async void OnRescanTokens(object sender, EventArgs e)
+        {
+            if (_tokens == null) return;
+            _tokenButton.Enabled = false;
+            _tokenSummary.Text = "Scanning...";
+            try
+            {
+                await _tokens.RefreshNowAsync();
+            }
+            finally
+            {
+                _tokenButton.Enabled = true;
+                UpdateTokenSummary();
+            }
+        }
+
+        private void UpdateTokenSummary()
+        {
+            if (_tokenSummary == null || _tokenSummary.IsDisposed) return;
+            _tokenSummary.Text = TokenSummary();
+        }
+
+        private string TokenSummary()
+        {
+            if (_tokens == null) return "Not scanning.";
+            if (!_settings.TokenUsageEnabled) return "Off - ClawdBar reads no transcripts.";
+            if (!_tokens.HasScanned) return _tokens.IsScanning ? "Scanning..." : "Not scanned yet.";
+            if (_tokens.LastError != null) return "Unavailable: " + _tokens.LastError;
+
+            TokenUsageSummary summary = _tokens.Summary;
+            if (summary.FilesSeen == 0)
+            {
+                return "No transcripts found. Run Claude Code once and they will show up here.";
+            }
+            return summary.FilesSeen.ToString(CultureInfo.InvariantCulture) + " transcripts, " +
+                TokenUsageFormat.Exact(summary.Total(7).Uncached) + " in+out tokens over the last 7 days (" +
+                summary.MessageCount(7).ToString(CultureInfo.InvariantCulture) + " turns).";
         }
 
         private void UpdateStatusSummary()

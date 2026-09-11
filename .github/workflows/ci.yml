@@ -105,6 +105,16 @@ jobs:
           if ($p.ExitCode -eq 0) { throw "--probe-credentials unexpectedly succeeded on a runner" }
           if ($out -notmatch "No credentials found") { throw "unexpected failure mode from --probe-credentials" }
 
+          # Same shape for the transcript scanner: a runner has never run
+          # Claude Code, so the missing-projects path is the one that gets
+          # exercised here and it must stay a clean exit rather than a stack.
+          $p = Start-Process -FilePath $exe -ArgumentList "--probe-tokens" -NoNewWindow -Wait -PassThru `
+                 -RedirectStandardOutput tokens.txt
+          $out = Get-Content tokens.txt -Raw
+          Write-Host $out
+          if ($p.ExitCode -eq 0) { throw "--probe-tokens unexpectedly found transcripts on a runner" }
+          if ($out -notmatch "No Claude Code transcripts at") { throw "unexpected failure mode from --probe-tokens" }
+
       - name: Upload build
         uses: actions/upload-artifact@v4
         with:

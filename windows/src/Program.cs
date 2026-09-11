@@ -16,6 +16,7 @@ namespace ClawdBar
         private const string ProbeCredentialsFlag = "--probe-credentials";
         private const string ProbeApiFlag = "--probe-api";
         private const string ProbeStatusFlag = "--probe-status";
+        private const string ProbeTokensFlag = "--probe-tokens";
         private const string ResetFlag = "--reset-onboarding";
         private const string HelpFlag = "--help";
 
@@ -33,6 +34,7 @@ namespace ClawdBar
                 if (arg == ProbeCredentialsFlag) return RunConsole(ProbeCredentials);
                 if (arg == ProbeApiFlag) return RunConsole(ProbeApi);
                 if (arg == ProbeStatusFlag) return RunConsole(ProbeStatus);
+                if (arg == ProbeTokensFlag) return RunConsole(ProbeTokens);
                 if (arg == ResetFlag) return RunConsole(ResetOnboarding);
                 if (arg == HelpFlag || arg == "-h" || arg == "/?") return RunConsole(PrintHelp);
             }
@@ -75,6 +77,7 @@ namespace ClawdBar
             Console.WriteLine("  " + ProbeCredentialsFlag + "     inspect stored credentials (shape only)");
             Console.WriteLine("  " + ProbeApiFlag + "             spend 1 Haiku token, dump anthropic-* headers");
             Console.WriteLine("  " + ProbeStatusFlag + "          fetch status.claude.com (no credentials, no tokens)");
+            Console.WriteLine("  " + ProbeTokensFlag + "          roll local transcripts up into daily token totals");
             Console.WriteLine("  " + ResetFlag + "       delete the settings file");
             return 0;
         }
@@ -196,9 +199,113 @@ namespace ClawdBar
             return 0;
         }
 
+        /// Prints what the transcript scanner sees. Useful for checking the
+        /// numbers against ccusage without opening the app, and for timing a
+        /// cold scan against a warm one.
+        private static int ProbeTokens()
+        {
+            var scanner = new TokenUsageScanner();
+            Console.WriteLine("ClawdBar token probe");
+            Console.WriteLine("====================");
+            Console.WriteLine("Transcripts : " + scanner.ProjectsDirectory);
+            Console.WriteLine("Cache       : " + scanner.CachePath);
+            Console.WriteLine("Retention   : " + scanner.RetentionDays.ToString(CultureInfo.InvariantCulture) + " days");
+            Console.WriteLine();
+
+            DateTime started = DateTime.UtcNow;
+            TokenUsageSummary summary;
+            try
+            {
+                summary = scanner.Scan();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Result: FAILED");
+                Console.WriteLine("Reason: " + ex.Message);
+                return 1;
+            }
+            double elapsed = (DateTime.UtcNow - started).TotalSeconds;
+
+            Console.WriteLine("Scanned " + summary.FilesSeen.ToString(CultureInfo.InvariantCulture) +
+                " transcript files in " + elapsed.ToString("0.00", CultureInfo.InvariantCulture) + "s");
+            Console.WriteLine("Days with data: " + summary.Days.Count.ToString(CultureInfo.InvariantCulture));
+            Console.WriteLine();
+            Console.WriteLine("DAY             IN+OUT     INPUT    OUTPUT   CACHE W   CACHE R     FRESH     TURNS  CLAUDE.AI");
+
+            List<DailyTokenUsage> recent = summary.Window(14);
+            for (int i = 0; i < recent.Count; i++)
+            {
+                DailyTokenUsage day = recent[i];
+                TokenCounts counts = day.Totals;
+                string columns =
+                    PadLeft(TokenUsageFormat.Compact(counts.Uncached), 10) +
+                    PadLeft(TokenUsageFormat.Compact(counts.Input), 10) +
+                    PadLeft(TokenUsageFormat.Compact(counts.Output), 10) +
+                    PadLeft(TokenUsageFormat.Compact(counts.CacheCreation), 10) +
+                    PadLeft(TokenUsageFormat.Compact(counts.CacheRead), 10) +
+                    PadLeft(TokenUsageFormat.Compact(counts.Fresh), 10) +
+                    PadLeft(day.Messages.ToString(CultureInfo.InvariantCulture), 10) +
+                    PadLeft(TokenUsageFormat.Compact(day.RawTotals.Uncached), 10);
+                Console.WriteLine(day.Day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + "  " + columns);
+            }
+            Console.WriteLine();
+
+            int[] ranges = { 1, 7, 30 };
+            for (int i = 0; i < ranges.Length; i++)
+            {
+                int range = ranges[i];
+                TokenCounts counts = summary.Total(range);
+                Console.WriteLine("Last " + Days(range) + ": " +
+                    TokenUsageFormat.Exact(counts.Uncached) + " in+out, " +
+                    TokenUsageFormat.Exact(counts.CacheCreation) + " written to cache, " +
+                    TokenUsageFormat.Exact(counts.CacheRead) + " replayed, across " +
+                    summary.MessageCount(range).ToString(CultureInfo.InvariantCulture) + " turns");
+            }
+            Console.WriteLine();
+
+            // The website counts every transcript record, not every API call -
+            // see TokenUsageScanner. Printing both is the fastest way to check
+            // that the gap is still the one we think it is, not a scanning bug.
+            Console.WriteLine("claude.ai equivalent (every record, in+out only)");
+            for (int i = 0; i < ranges.Length; i++)
+            {
+                int range = ranges[i];
+                long mine = summary.Total(range).Uncached;
+                long theirs = summary.RawTotal(range).Uncached;
+                double ratio = mine == 0 ? 0 : theirs / (double)mine;
+                Console.WriteLine("  Last " + Days(range) + ": " +
+                    TokenUsageFormat.Exact(theirs) + " vs " + TokenUsageFormat.Exact(mine) + " here (" +
+                    ratio.ToString("0.00", CultureInfo.InvariantCulture) + "x)");
+            }
+            Console.WriteLine();
+
+            Console.WriteLine("By model (30 days)");
+            List<ModelSpend> models = summary.ModelBreakdown(30);
+            for (int i = 0; i < models.Count; i++)
+            {
+                ModelSpend entry = models[i];
+                Console.WriteLine("  " + Pad(entry.DisplayName, 14) + " " +
+                    TokenUsageFormat.Exact(entry.Counts.Uncached) + " in+out (+" +
+                    TokenUsageFormat.Exact(entry.Counts.CacheCreation) + " written, " +
+                    TokenUsageFormat.Exact(entry.Counts.CacheRead) + " replayed)");
+            }
+            return 0;
+        }
+
+        private static string Days(int count)
+        {
+            return count.ToString(CultureInfo.InvariantCulture) + (count == 1 ? " day" : " days");
+        }
+
         private static string Pad(string text, int width)
         {
             return text == null ? "".PadRight(width) : text.PadRight(width);
+        }
+
+        /// Right-aligns a probe column.
+        private static string PadLeft(string text, int width)
+        {
+            return text == null ? "".PadLeft(width) : text.PadLeft(width);
         }
 
         private static string Fmt(double? percent)
@@ -232,6 +339,7 @@ namespace ClawdBar
         private readonly AppSettings _settings;
         private readonly UsageDaemon _daemon;
         private readonly StatusMonitor _status;
+        private readonly TokenUsageMonitor _tokens;
         private readonly NotificationManager _notifications;
         private readonly NotifyIcon _tray;
 
@@ -252,6 +360,11 @@ namespace ClawdBar
             // the page is public, so it can start right away and give a fresh
             // install something true to show on first open.
             _status = new StatusMonitor();
+
+            // Token spend comes from files Claude Code already wrote, so the
+            // scan needs no credentials, no network and no onboarding - it can
+            // run as soon as the message loop is up.
+            _tokens = new TokenUsageMonitor();
 
             _notifications = new NotificationManager(DeliverNotification);
 
@@ -279,6 +392,7 @@ namespace ClawdBar
 
             _daemon.Start();
             if (_settings.ServiceStatusEnabled) _status.Start();
+            if (_settings.TokenUsageEnabled) _tokens.RefreshNowAsync();
             RefreshTray();
 
             if (_settings.OverlayEnabledOnLaunch) ToggleOverlay();
@@ -350,7 +464,8 @@ namespace ClawdBar
         {
             if (_popup == null || _popup.IsDisposed)
             {
-                _popup = new PopupForm(_daemon, _status, _settings, ToggleOverlay, ShowSettings, Quit);
+                _popup = new PopupForm(_daemon, _status, _tokens, _settings,
+                    ToggleOverlay, ShowSettings, Quit);
             }
             if (_popup.Visible)
             {
@@ -376,7 +491,8 @@ namespace ClawdBar
                 _settingsForm.Activate();
                 return;
             }
-            _settingsForm = new SettingsForm(_settings, _daemon, _status, OnSettingsChanged, ResetOverlaySize);
+            _settingsForm = new SettingsForm(_settings, _daemon, _status, _tokens,
+                OnSettingsChanged, ResetOverlaySize);
             _settingsForm.FormClosed += delegate { _settingsForm = null; };
             _settingsForm.Show();
             _settingsForm.Activate();
@@ -394,6 +510,10 @@ namespace ClawdBar
             {
                 _status.Stop();
             }
+
+            // Turning token spend back on should have numbers ready by the
+            // time the user closes Preferences and opens the panel.
+            if (_settings.TokenUsageEnabled) _tokens.RefreshIfStaleAsync(30);
 
             RefreshTray();
             if (_overlay != null && !_overlay.IsDisposed)

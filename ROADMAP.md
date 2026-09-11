@@ -33,10 +33,17 @@ transcript once the first pass is done. The undeduplicated tally is kept too,
 because that is what claude.ai's own chart plots and the readout shows both.
 Cache at `~/.clawdbar/tokens.json`, retention 90 days.
 
+The Windows port has the same tab bar, the same two ranges, the same readout
+line and a `ClawdBar.exe --probe-tokens` probe. Transcripts come from
+`%USERPROFILE%\.claude\projects` and the cache from
+`%USERPROFILE%\.clawdbar\tokens.json`; a cold pass over 580 MB of transcripts
+takes ~1.2 s there and a warm one 0.03 s.
+
 Still open here: the floating overlay has no token page yet — the carousel is
-generic over exactly five slots, so adding a sixth is a small refactor. Cost
-estimates in dollars are deliberately absent: subscription usage isn't billed
-per token, so a dollar figure would be fiction.
+generic over exactly five slots, so adding a sixth is a small refactor, and it
+would have to land on both platforms. Cost estimates in dollars are deliberately
+absent: subscription usage isn't billed per token, so a dollar figure would be
+fiction.
 
 ### Plan pill reads the account, not the token — landed 2026-09-05
 
@@ -49,6 +56,12 @@ sends no plan header to cross-check against.
 `~/.claude.json` does carry the live answer (`oauthAccount.organizationType`,
 `organizationRateLimitTier`), so that is now the primary source, with the token
 claims kept as a fallback for setups where the file isn't there.
+
+The Windows port reads the same file at `%USERPROFILE%\.claude.json`, with the
+same precedence and the same re-read-on-mtime rule, and names the winning source
+in Preferences → Data Source. It parses only the `oauthAccount` object rather
+than the whole file: the port's JSON reader builds a full tree, and that file
+runs to megabytes on a busy machine.
 
 ### Saved credential — landed 2026-09-04
 
@@ -70,6 +83,12 @@ next to it: paste the output of `claude setup-token` and ClawdBar stops
 touching Claude Code's item entirely — no prompt, ever. A 401 on that one is
 reported as "re-run setup-token" instead of silently discarding the user's
 choice.
+
+Not ported to Windows, deliberately: the whole feature exists to avoid a
+keychain prompt, and there is no prompt to avoid there. Claude Code on Windows
+writes its token to `%USERPROFILE%\.claude\.credentials.json`, a plain file in
+the user's own profile that ClawdBar reads with no dialog and no ACL, so a
+mirror would add a second copy of the token for no benefit.
 
 Still open here: the ACL is bound to the app's code signature, so an ad-hoc
 build re-prompts once after every rebuild. Developer ID signing fixes that for

@@ -55,19 +55,26 @@ namespace ClawdBar
         }
     }
 
+    /// The two secondary panels under the rate-limit bars. Token spend leads
+    /// because it changes every session; service status is a page you only
+    /// need on the rare day something is actually broken - but it carries a
+    /// badge so a live incident still pulls the eye while it sits behind a tab.
+    internal enum PopoverTab { Tokens, Status }
+
     /// Windows counterpart of PopoverView: the panel that opens from the tray
     /// icon. Same 340pt width and the same four action buttons as the macOS
     /// popover, redrawn with GDI+.
     internal sealed class PopupForm : Form
     {
         private const int PanelWidth = 340;
-        /// Height without the service-status block. That block is added on top
-        /// whenever the feature is on, because its size depends on how many
-        /// rows status.claude.com is currently listing.
+        /// Height without the tabbed panel. That block is added on top
+        /// whenever at least one tab is enabled, because its size depends on
+        /// how many rows status.claude.com is currently listing.
         private const int PanelBaseHeight = 306;
 
         private readonly UsageDaemon _daemon;
         private readonly StatusMonitor _status;
+        private readonly TokenUsageMonitor _tokens;
         private readonly AppSettings _settings;
         private readonly Action _onToggleOverlay;
         private readonly Action _onOpenSettings;
@@ -83,16 +90,24 @@ namespace ClawdBar
         private HitButton _hovered;
         private int _moodPhase;
 
+        /// Last known pointer position, or (-1, -1) when it left the panel.
+        /// The token chart resolves its hovered column from this at paint time
+        /// rather than from a cached HitButton: the hotspot list is rebuilt on
+        /// every repaint, so a remembered button goes stale the moment the
+        /// chart redraws.
+        private Point _mouse = new Point(-1, -1);
+
         /// The panel closes as soon as it loses focus, the way a tray flyout
         /// should. The preview harness turns this off so the window can be
         /// inspected while something else holds focus.
         public bool AutoHideOnDeactivate = true;
 
-        public PopupForm(UsageDaemon daemon, StatusMonitor status, AppSettings settings,
-            Action onToggleOverlay, Action onOpenSettings, Action onQuit)
+        public PopupForm(UsageDaemon daemon, StatusMonitor status, TokenUsageMonitor tokens,
+            AppSettings settings, Action onToggleOverlay, Action onOpenSettings, Action onQuit)
         {
             _daemon = daemon;
             _status = status;
+            _tokens = tokens;
             _settings = settings;
             _onToggleOverlay = onToggleOverlay;
             _onOpenSettings = onOpenSettings;
@@ -119,7 +134,8 @@ namespace ClawdBar
             };
 
             _daemon.Changed += OnDaemonChanged;
-            if (_status != null) _status.Changed += OnStatusChanged;
+            if (_status != null) _status.Changed += OnSecondaryChanged;
+            if (_tokens != null) _tokens.Changed += OnSecondaryChanged;
         }
 
         private void OnDaemonChanged(object sender, EventArgs e)
@@ -129,8 +145,8 @@ namespace ClawdBar
         }
 
         /// A fresh snapshot can add or drop rows, so the panel is re-measured
-        /// before it repaints.
-        private void OnStatusChanged(object sender, EventArgs e)
+        /// before it repaints. Shared by both secondary monitors.
+        private void OnSecondaryChanged(object sender, EventArgs e)
         {
             if (IsDisposed) return;
             Relayout();
@@ -144,8 +160,12 @@ namespace ClawdBar
                 Task status = _status != null && _status.IsPolling
                     ? _status.RefreshNowAsync()
                     : null;
+                Task tokens = _tokens != null && _settings.TokenUsageEnabled
+                    ? _tokens.RefreshNowAsync()
+                    : null;
                 await _daemon.RefreshNowAsync();
                 if (status != null) await status;
+                if (tokens != null) await tokens;
             });
             var overlay = new HitButton(Glyphs.Overlay, "Toggle floating window", delegate
             {
@@ -186,7 +206,7 @@ namespace ClawdBar
         /// cursor left it instead of sliding under the taskbar.
         private void Relayout()
         {
-            int height = PanelBaseHeight + StatusBlockHeight();
+            int height = PanelBaseHeight + PanelBlockHeight();
             if (height == _panelHeight) return;
 
             int delta = height - _panelHeight;
@@ -233,8 +253,20 @@ namespace ClawdBar
             Invalidate();
 
             // Opening the panel is the moment the answer matters most, so top
-            // the snapshot up; RefreshIfStale coalesces repeated opens.
+            // the snapshots up; RefreshIfStale coalesces repeated opens.
+            SurfaceIncidentIfNeeded();
+            if (_tokens != null && _settings.TokenUsageEnabled) await _tokens.RefreshIfStaleAsync(30);
             if (_status != null && _status.IsPolling) await _status.RefreshIfStaleAsync(60);
+        }
+
+        /// Pop the status panel to the front when something is actually wrong.
+        /// Only on open, and only for a live problem - otherwise the tab the
+        /// user chose last wins.
+        private void SurfaceIncidentIfNeeded()
+        {
+            if (!AvailableTabs().Contains(PopoverTab.Status)) return;
+            if (_status.Status == null || ServiceLevels.IsHealthy(_status.Status.WorstLevel)) return;
+            SelectTab(PopoverTab.Status);
         }
 
         /// ShowNearTray measures the panel before placing it, but the preview
@@ -270,6 +302,8 @@ namespace ClawdBar
         protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);
+            _mouse = e.Location;
+
             HitButton found = Hit(e.Location);
             if (!ReferenceEquals(found, _hovered))
             {
@@ -277,7 +311,18 @@ namespace ClawdBar
                 _tips.SetToolTip(this, found == null ? null : found.Tooltip);
                 Cursor = found == null || found.OnClick == null ? Cursors.Default : Cursors.Hand;
                 Invalidate();
+                return;
             }
+            // The chart readout follows the pointer across a single column,
+            // which no HitButton transition would report.
+            if (SelectedTab == PopoverTab.Tokens) Invalidate();
+        }
+
+        protected override void OnMouseLeave(EventArgs e)
+        {
+            base.OnMouseLeave(e);
+            _mouse = new Point(-1, -1);
+            Invalidate();
         }
 
         protected override void OnMouseClick(MouseEventArgs e)
@@ -342,14 +387,14 @@ namespace ClawdBar
 
             PaintFooter(g, usage, y);
 
-            // The status block is anchored to the bottom, right above the
+            // The tabbed panel is anchored to the bottom, right above the
             // action row, so the usage half of the panel never moves.
-            int block = StatusBlockHeight();
+            int block = PanelBlockHeight();
             if (block > 0)
             {
                 float top = _panelHeight - 45 - block;
                 PaintDivider(g, top);
-                PaintServiceStatus(g, top + 12);
+                PaintPanelBlock(g, top + 12);
             }
 
             PaintDivider(g, _panelHeight - 45);
@@ -494,6 +539,473 @@ namespace ClawdBar
             }
         }
 
+        // ------------------------------------------------------ tabbed panel
+
+        private const int TabStripHeight = 22;
+
+        /// Tokens first: it moves every session. Service status only earns a
+        /// slot when the user has polling on at all.
+        private List<PopoverTab> AvailableTabs()
+        {
+            var tabs = new List<PopoverTab>();
+            if (_tokens != null && _settings.TokenUsageEnabled) tabs.Add(PopoverTab.Tokens);
+            if (_status != null && _status.IsPolling) tabs.Add(PopoverTab.Status);
+            return tabs;
+        }
+
+        private PopoverTab SelectedTab
+        {
+            get
+            {
+                List<PopoverTab> tabs = AvailableTabs();
+                PopoverTab stored = _settings.PopoverTab == "status"
+                    ? PopoverTab.Status
+                    : PopoverTab.Tokens;
+                if (tabs.Contains(stored)) return stored;
+                return tabs.Count > 0 ? tabs[0] : PopoverTab.Tokens;
+            }
+        }
+
+        private void SelectTab(PopoverTab tab)
+        {
+            string name = tab == PopoverTab.Status ? "status" : "tokens";
+            if (_settings.PopoverTab == name) return;
+            _settings.PopoverTab = name;
+            _settings.Save();
+            Relayout();
+            Invalidate();
+        }
+
+        /// How much room the tabbed panel needs - 0 when both features are off.
+        ///
+        /// Both panels are measured and the taller one wins, even though only
+        /// one is drawn. The macOS build stacks them in a ZStack for the same
+        /// reason: a height that followed the selected tab would move the whole
+        /// panel on every switch, and here the panel grows upwards, so the
+        /// action row would slide out from under the cursor.
+        private int PanelBlockHeight()
+        {
+            List<PopoverTab> tabs = AvailableTabs();
+            if (tabs.Count == 0) return 0;
+
+            int body = 0;
+            for (int i = 0; i < tabs.Count; i++)
+            {
+                int height = tabs[i] == PopoverTab.Tokens ? TokenBodyHeight() : StatusBodyHeight();
+                if (height > body) body = height;
+            }
+            return 12 + (tabs.Count > 1 ? TabStripHeight : 0) + body + 12;
+        }
+
+        private void PaintPanelBlock(Graphics g, float y)
+        {
+            List<PopoverTab> tabs = AvailableTabs();
+            if (tabs.Count == 0) return;
+
+            if (tabs.Count > 1)
+            {
+                PaintTabStrip(g, y, tabs);
+                y += TabStripHeight;
+            }
+            if (SelectedTab == PopoverTab.Tokens) PaintTokenUsage(g, y);
+            else PaintServiceStatus(g, y);
+        }
+
+        /// Titles with an underline under the active one, and a dot beside
+        /// SERVICE whenever the status page is not all-green - the whole point
+        /// of demoting that panel is that you should not have to go looking,
+        /// so the tab has to come find you.
+        private void PaintTabStrip(Graphics g, float y, List<PopoverTab> tabs)
+        {
+            const float left = 16;
+            Font font = Theme.Retro(9, FontStyle.Bold);
+
+            float x = left;
+            for (int i = 0; i < tabs.Count; i++)
+            {
+                PopoverTab tab = tabs[i];
+                bool active = tab == SelectedTab;
+                string title = tab == PopoverTab.Tokens ? "TOKENS" : "SERVICE";
+                float width = Draw.MeasureTracked(g, title, font, 1.5f);
+
+                Draw.TrackedString(g, title, font,
+                    active ? Theme.TextPrimary : Theme.TextMuted, x, y, 1.5f);
+
+                float end = x + width;
+                Color badge;
+                if (TabBadge(tab, out badge))
+                {
+                    using (var glow = new SolidBrush(Theme.Fade(badge, 0.4)))
+                    {
+                        g.FillEllipse(glow, end + 1, y + 1, 9, 9);
+                    }
+                    using (var brush = new SolidBrush(badge))
+                    {
+                        g.FillEllipse(brush, end + 3, y + 3, 5, 5);
+                    }
+                    end += 11;
+                }
+
+                if (active)
+                {
+                    using (var brush = new SolidBrush(Theme.AccentWarm))
+                    {
+                        g.FillRectangle(brush, x, y + 14, width, 2);
+                    }
+                }
+
+                PopoverTab chosen = tab;
+                AddHotspot(new RectangleF(x - 4, y - 3, end - x + 8, 21), null,
+                    delegate { SelectTab(chosen); });
+                x = end + 16;
+            }
+        }
+
+        private bool TabBadge(PopoverTab tab, out Color color)
+        {
+            color = Theme.TextMuted;
+            if (tab != PopoverTab.Status || _status == null || _status.Status == null) return false;
+            ServiceLevel worst = _status.Status.WorstLevel;
+            if (ServiceLevels.IsHealthy(worst)) return false;
+            color = Theme.ColorFor(worst);
+            return true;
+        }
+
+        // ------------------------------------------------------- token spend
+
+        private const int TokenLabelHeight = 16;
+        private const int TokenBigHeight = 30;
+        private const int TokenCaptionHeight = 13;
+        private const int TokenChartHeight = 44;
+        private const int TokenAxisHeight = 16;
+        private const int TokenReadoutHeight = 16;
+
+        /// Fixed height: the chart is 7 or 30 columns either way, and the
+        /// empty state is shorter than the chart it stands in for. Reserving
+        /// the full box means the first scan landing does not resize the panel
+        /// under the pointer.
+        private int TokenBodyHeight()
+        {
+            return TokenLabelHeight + TokenBigHeight + TokenCaptionHeight +
+                   TokenChartHeight + TokenAxisHeight + TokenReadoutHeight;
+        }
+
+        private int RangeDays
+        {
+            get { return _settings.TokenRange == "month" ? 30 : 7; }
+        }
+
+        private string RangeLabel
+        {
+            get { return RangeDays == 30 ? "30D" : "7D"; }
+        }
+
+        /// Daily token spend, read from Claude Code's own transcripts. Answers
+        /// the question the rate-limit bars cannot: not "how close am I to the
+        /// ceiling" but "how much did I actually burn today, and how does that
+        /// compare to the last week or month".
+        private void PaintTokenUsage(Graphics g, float y)
+        {
+            const float left = 16;
+            const float right = PanelWidth - 16;
+
+            List<DailyTokenUsage> series = _tokens.Summary.Window(RangeDays);
+            DailyTokenUsage today = series.Count > 0
+                ? series[series.Count - 1]
+                : DailyTokenUsage.Empty(DateTime.Now.Date);
+
+            // The label goes *above* the number, not under it: "23M" on its own
+            // answers nothing, and the first question anyone asks of this panel
+            // is "how much did I spend today".
+            Draw.TrackedString(g, "TOKENS TODAY", Theme.Retro(9), Theme.TextSecondary, left, y, 2f);
+            PaintRangePicker(g, right, y - 3);
+
+            float headlineTop = y;
+            y += TokenLabelHeight;
+
+            // Cache reads run 97-99% of the raw total on agentic work: every
+            // turn replays a context that was paid for once. Leading with that
+            // number makes an ordinary day read as tens of millions of tokens,
+            // which is true and useless. So the headline is input + output -
+            // the same two counters the claude.ai chart plots - and the two
+            // cache counters are named in the caption rather than hidden.
+            Draw.String(g, TokenUsageFormat.Compact(today.Totals.Uncached),
+                Theme.Retro(26), Theme.AccentWarm, left, y);
+
+            Font small = Theme.Retro(8);
+            if (_tokens.IsScanning)
+            {
+                PaintSpinner(g, new RectangleF(right - 12, y + 6, 11, 11));
+            }
+            else if (_tokens.HasScanned && _tokens.SnapshotAgeSeconds.HasValue)
+            {
+                string age = "upd " + ShortAge(_tokens.SnapshotAgeSeconds.Value);
+                float width = Draw.Measure(g, age, small).Width;
+                Draw.String(g, age, small, Theme.TextMuted, right - width, y + 8);
+            }
+            y += TokenBigHeight;
+
+            // Hovering the headline reads out today, the same as hovering its
+            // own bar would.
+            var headline = new RectangleF(left, headlineTop, right - left, y - headlineTop);
+            bool headlineHovered = headline.Contains(_mouse);
+
+            if (_tokens.Summary.FilesSeen == 0 && _tokens.HasScanned)
+            {
+                PaintTokenEmptyState(g, left, y, right - left);
+                return;
+            }
+
+            string caption = TurnsCaption(today);
+            if (caption.Length > 0)
+            {
+                Draw.String(g, Fit(g, caption, small, right - left), small, Theme.TextMuted, left, y);
+            }
+            y += TokenCaptionHeight;
+
+            int hovered = PaintTokenChart(g, series, left, y, right - left);
+            y += TokenChartHeight;
+
+            PaintTokenAxis(g, series, left, y + 3, right - left);
+            y += TokenAxisHeight;
+
+            DailyTokenUsage readout = hovered >= 0
+                ? series[hovered]
+                : (headlineHovered ? today : null);
+            if (readout != null)
+            {
+                Draw.String(g, Fit(g, DayReadout(readout), ReadoutFont, right - left),
+                    ReadoutFont, Theme.TextPrimary, left, y + 2);
+            }
+            else
+            {
+                PaintRangeReadout(g, left, y + 2, right - left);
+            }
+        }
+
+        /// Cache writes and cache reads, named beside the headline rather than
+        /// folded into it: between the three lines all four counters stay on
+        /// screen and nothing is silently swallowed by the big number.
+        private static string TurnsCaption(DailyTokenUsage day)
+        {
+            TokenCounts counts = day.Totals;
+            var parts = new List<string>();
+            if (day.Messages > 0)
+            {
+                parts.Add(day.Messages.ToString(CultureInfo.InvariantCulture) +
+                    (day.Messages == 1 ? " TURN" : " TURNS"));
+            }
+            if (counts.CacheCreation > 0) parts.Add("+" + TokenUsageFormat.Compact(counts.CacheCreation) + " CACHED");
+            if (counts.CacheRead > 0) parts.Add("+" + TokenUsageFormat.Compact(counts.CacheRead) + " REPLAYED");
+            return string.Join("  -  ", parts.ToArray());
+        }
+
+        private void PaintRangePicker(Graphics g, float right, float y)
+        {
+            Font font = Theme.Retro(8);
+            int[] days = { 30, 7 };
+
+            float x = right;
+            for (int i = 0; i < days.Length; i++)
+            {
+                int chosen = days[i];
+                string label = chosen.ToString(CultureInfo.InvariantCulture) + "D";
+                SizeF size = Draw.Measure(g, label, font);
+                var rect = new RectangleF(x - size.Width - 12, y, size.Width + 12, size.Height + 6);
+                bool active = RangeDays == chosen;
+
+                Draw.FillRounded(g, rect, 4, active ? Theme.Fade(Theme.AccentWarm, 0.18) : Theme.BgPanel);
+                Draw.String(g, label, font, active ? Theme.AccentWarm : Theme.TextMuted,
+                    rect.X + 6, rect.Y + 3);
+                AddHotspot(rect, "Show the last " + chosen.ToString(CultureInfo.InvariantCulture) + " days",
+                    delegate { SelectRange(chosen); });
+
+                x = rect.X - 3;
+            }
+        }
+
+        private void SelectRange(int days)
+        {
+            string name = days == 30 ? "month" : "week";
+            if (_settings.TokenRange == name) return;
+            _settings.TokenRange = name;
+            _settings.Save();
+            Invalidate();
+        }
+
+        /// Draws the bars and returns the index of the column under the
+        /// pointer, or -1. The hover target is the whole column, not the drawn
+        /// bar: on a quiet day that bar is a 3 px sliver and would be nearly
+        /// unhittable.
+        private int PaintTokenChart(Graphics g, List<DailyTokenUsage> series, float x, float y, float width)
+        {
+            if (series.Count == 0) return -1;
+
+            long peak = 1;
+            for (int i = 0; i < series.Count; i++)
+            {
+                long value = series[i].Totals.Uncached;
+                if (value > peak) peak = value;
+            }
+
+            float spacing = RangeDays <= 7 ? 5f : 2f;
+            float columnWidth = (width - spacing * (series.Count - 1)) / series.Count;
+
+            int hovered = -1;
+            for (int i = 0; i < series.Count; i++)
+            {
+                var column = new RectangleF(x + i * (columnWidth + spacing), y, columnWidth, TokenChartHeight);
+                if (column.Contains(_mouse)) hovered = i;
+            }
+
+            DateTime today = DateTime.Now.Date;
+            for (int i = 0; i < series.Count; i++)
+            {
+                DailyTokenUsage day = series[i];
+                long value = day.Totals.Uncached;
+                bool isToday = day.Day.Date == today;
+                bool isHovered = hovered == i;
+
+                Color color;
+                if (value == 0) color = isHovered ? Theme.Fade(Theme.TextMuted, 0.45) : Theme.BgRaised;
+                else if (isToday) color = Theme.AccentWarm;
+                else color = Theme.Fade(Theme.AccentCool, isHovered ? 1.0 : 0.7);
+
+                // Empty days still get a 2 px stub so the baseline stays
+                // readable and an idle day is visibly different from a
+                // missing one.
+                float height = value == 0
+                    ? 2f
+                    : Math.Max(3f, (float)(TokenChartHeight * (value / (double)peak)));
+                var bar = new RectangleF(x + i * (columnWidth + spacing),
+                    y + TokenChartHeight - height, columnWidth, height);
+                Draw.FillRounded(g, bar, Math.Min(2f, columnWidth / 2f), color);
+            }
+            return hovered;
+        }
+
+        /// A weekday letter per bar reads fine across seven columns; across
+        /// thirty the columns are ~8 px wide and a two-digit date renders as a
+        /// smear, so the month view gets endpoints instead.
+        private void PaintTokenAxis(Graphics g, List<DailyTokenUsage> series, float x, float y, float width)
+        {
+            if (series.Count == 0) return;
+            Font font = Theme.Retro(7);
+            DateTime today = DateTime.Now.Date;
+
+            if (RangeDays <= 7)
+            {
+                float spacing = 5f;
+                float columnWidth = (width - spacing * (series.Count - 1)) / series.Count;
+                for (int i = 0; i < series.Count; i++)
+                {
+                    DailyTokenUsage day = series[i];
+                    string label = TokenUsageFormat.AxisLabel(day.Day, false);
+                    float labelWidth = Draw.Measure(g, label, font).Width;
+                    float center = x + i * (columnWidth + spacing) + columnWidth / 2f;
+                    Draw.String(g, label, font,
+                        day.Day.Date == today ? Theme.AccentWarm : Theme.TextMuted,
+                        center - labelWidth / 2f, y);
+                }
+                return;
+            }
+
+            string first = TokenUsageFormat.MonthDay(series[0].Day);
+            string middle = TokenUsageFormat.MonthDay(series[series.Count / 2].Day);
+            Draw.String(g, first, font, Theme.TextMuted, x, y);
+            float middleWidth = Draw.Measure(g, middle, font).Width;
+            Draw.String(g, middle, font, Theme.TextMuted, x + (width - middleWidth) / 2f, y);
+            float todayWidth = Draw.Measure(g, "TODAY", font).Width;
+            Draw.String(g, "TODAY", font, Theme.AccentWarm, x + width - todayWidth, y);
+        }
+
+        /// "31 AUG  -  1.3M  -  1504 TURNS  -  2.9M ON CLAUDE.AI"
+        ///
+        /// The trailing figure is the same day as the claude.ai usage chart
+        /// reports it: every transcript record, not every API call. It runs
+        /// about twice the app's own number, and saying so here is cheaper
+        /// than having the user find the gap and conclude the app is broken.
+        private static string DayReadout(DailyTokenUsage day)
+        {
+            TokenCounts counts = day.Totals;
+            var parts = new List<string>();
+            parts.Add(TokenUsageFormat.MonthDay(day.Day));
+            if (counts.IsEmpty)
+            {
+                parts.Add("IDLE");
+                return string.Join("  -  ", parts.ToArray());
+            }
+            parts.Add(TokenUsageFormat.Compact(counts.Uncached));
+            if (day.Messages > 0)
+            {
+                parts.Add(day.Messages.ToString(CultureInfo.InvariantCulture) +
+                    (day.Messages == 1 ? " TURN" : " TURNS"));
+            }
+            if (day.RawTotals.Uncached > counts.Uncached)
+            {
+                parts.Add(TokenUsageFormat.Compact(day.RawTotals.Uncached) + " ON CLAUDE.AI");
+            }
+            return string.Join("  -  ", parts.ToArray());
+        }
+
+        /// The default readout: the whole range, in the app's own count and in
+        /// the website's. Drawn as coloured runs rather than one string so the
+        /// headline figure still leads at a glance.
+        /// One size below the rest of the panel chrome. The readout has to
+        /// carry three figures across 308 px in a fixed-pitch 8x8 pixel font,
+        /// and macOS solves the same squeeze with minimumScaleFactor, which
+        /// GDI+ has no equivalent of.
+        private static Font ReadoutFont
+        {
+            get { return Theme.Retro(8); }
+        }
+
+        private void PaintRangeReadout(Graphics g, float x, float y, float width)
+        {
+            Font font = ReadoutFont;
+            long total = _tokens.Summary.Total(RangeDays).Uncached;
+            long mirrored = _tokens.Summary.RawTotal(RangeDays).Uncached;
+            long average = total / Math.Max(RangeDays, 1);
+
+            string head = RangeLabel + " " + TokenUsageFormat.Compact(total);
+            string avg = "AVG " + TokenUsageFormat.Compact(average) + "/DAY";
+            string tail = TokenUsageFormat.Compact(mirrored) + " ON CLAUDE.AI";
+
+            float cursor = x;
+            cursor = Run(g, head, font, Theme.TextPrimary, cursor, y) + 7;
+            cursor = Run(g, "-", font, Theme.TextMuted, cursor, y) + 7;
+            cursor = Run(g, avg, font, Theme.TextSecondary, cursor, y) + 7;
+
+            // The mirror is the least important of the three, so it is what
+            // gives way when the line runs out of room rather than the whole
+            // readout shrinking.
+            if (mirrored <= total) return;
+            float needed = Draw.Measure(g, "-", font).Width + 7 + Draw.Measure(g, tail, font).Width;
+            if (cursor + needed > x + width) return;
+            cursor = Run(g, "-", font, Theme.TextMuted, cursor, y) + 7;
+            Run(g, tail, font, Theme.TextMuted, cursor, y);
+        }
+
+        private static float Run(Graphics g, string text, Font font, Color color, float x, float y)
+        {
+            Draw.String(g, text, font, color, x, y);
+            return x + Draw.Measure(g, text, font).Width;
+        }
+
+        private void PaintTokenEmptyState(Graphics g, float x, float y, float width)
+        {
+            Draw.TrackedString(g, "NO TRANSCRIPTS FOUND", Theme.Retro(9, FontStyle.Bold),
+                Theme.TextSecondary, x, y, 1f);
+            using (var brush = new SolidBrush(Theme.TextMuted))
+            {
+                g.DrawString(
+                    "Token spend is read from " + _tokens.ProjectsDirectory +
+                    ". Run Claude Code once and it will show up here.",
+                    Theme.Ui(11, FontStyle.Regular), brush,
+                    new RectangleF(x, y + 16, width, 40));
+            }
+        }
+
         // ----------------------------------------------------- service status
 
         private const int StatusTitleHeight = 16;
@@ -501,21 +1013,21 @@ namespace ClawdBar
         private const int StatusRowHeight = 13;
         private const int StatusIncidentHeight = 34;
 
-        /// How much room the service-status section needs for the snapshot it
-        /// is holding right now — 0 when the feature is switched off.
-        private int StatusBlockHeight()
+        /// How much room the service-status panel needs for the snapshot it is
+        /// holding right now, excluding the block padding PanelBlockHeight adds.
+        private int StatusBodyHeight()
         {
             if (_status == null || !_settings.ServiceStatusEnabled) return 0;
 
-            int height = 12 + StatusTitleHeight;
+            int height = StatusTitleHeight;
             ServiceStatus snapshot = _status.Status;
-            if (snapshot == null) return height + StatusHeadlineHeight + 12;
+            if (snapshot == null) return height + StatusHeadlineHeight;
 
             height += StatusHeadlineHeight;
             height += ((snapshot.Components.Count + 1) / 2) * StatusRowHeight;
             if (snapshot.Incidents.Count > 0) height += 6 + StatusIncidentHeight;
             if (snapshot.Incidents.Count > 1) height += 12;
-            return height + 12;
+            return height;
         }
 
         /// Compact mirror of status.claude.com: overall indicator, a dot per
@@ -746,7 +1258,8 @@ namespace ClawdBar
             if (disposing)
             {
                 _daemon.Changed -= OnDaemonChanged;
-                if (_status != null) _status.Changed -= OnStatusChanged;
+                if (_status != null) _status.Changed -= OnSecondaryChanged;
+                if (_tokens != null) _tokens.Changed -= OnSecondaryChanged;
                 if (_tick != null) _tick.Dispose();
                 if (_tips != null) _tips.Dispose();
             }
